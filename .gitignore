@@ -1,0 +1,14 @@
+# Gradle
+.gradle/
+build/
+*/build/
+local.properties
+# Native deps (reproducible via scripts/fetch-native-deps.sh)
+third-party/
+# SDK
+android-sdk/
+# IDE
+.idea/
+*.iml
+# OS
+.DS_Store
