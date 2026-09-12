@@ -16,7 +16,9 @@ are byte-identical across platforms.
 | `:piper-engine` | piper-objc (Piper.swift, PiperCreateOptions.swift) | `PiperEngine`: JNI bridge over libpiper; serialized synthesis, sentence splitting, skip-failed-sentence resilience, WAV file output |
 | `:piper-utils` | piper-utils (Swift) | Pure-JVM Kotlin: `SentenceSplitter`, `SsmlParser`, `AlignmentParser` |
 | `:piper-player` | piper-player (Swift) | `SpeedCurve` (exact 17-point table + sibilant clamp), `PiperPlayer` (AudioTrack streaming) |
-| `:app` | piper-app | Minimal sample app: text field, rate slider, Speak/Stop |
+
+The sample app lives in the sibling repo **piper-app-android**
+(iOS twin: piper-app) and consumes this library via a Gradle composite build.
 
 ## Prerequisites
 
@@ -31,6 +33,12 @@ scripts/setup-android-sdk.sh   # installs the SDK into ~/workspace/android-sdk
 
 ```bash
 scripts/fetch-native-deps.sh   # vendors piper1-gpl, espeak-ng, onnxruntime into third-party/
+./gradlew :piper-engine:assembleDebug   # builds the native + Kotlin library
+```
+
+Then in the sibling piper-app-android repo:
+
+```bash
 scripts/download-voice.sh en_US-lessac-medium   # voice -> app/src/main/assets/voices/
 ./gradlew assembleDebug        # APK at app/build/outputs/apk/debug/app-debug.apk
 ```
@@ -46,7 +54,7 @@ the plain `Java_dev_ihorshevchuk_piper_engine_PiperEngine_nativeXxx` names:
 | Kotlin | C++ (`piper_jni.cpp`) | piper.h |
 |---|---|---|
 | `nativeCreate(...)` | holds `piper_synthesizer*` in an `EngineContext`, returned as `jlong` | `piper_create_with_options` |
-| `nativeDestroy(handle)` | `piper_destroy` + deletes the context | `piper_destroy` |
+| `nativeDestroy(handle)` | `piper_free` + deletes the context | `piper_free` |
 | `nativeDefaultOptions(handle)` | `[speakerId, lengthScale, noiseScale, noiseWScale]` | `piper_default_synthesize_options` |
 | `nativeSynthesizeStart(...)` | returns the raw rc | `piper_synthesize_start` |
 | `nativeSynthesizeNext(handle)` | `FloatArray?`; null at `PIPER_DONE` (or on error) | `piper_synthesize_next` |
@@ -84,10 +92,11 @@ between sentences; `close()` queues `nativeDestroy` behind any in-flight call.
 
 The native layer needs the compiled espeak-ng data directory at runtime.
 `PiperEngine` resolves it as: explicit `espeakDataPath` -> `<files>/espeak-ng-data`
--> `<dataDir>/espeak-ng-data` -> native auto-discovery. The sample app copies
-`app/src/main/assets/espeak-ng-data/` to filesDir on first launch. Stage it
-there by compiling the vendored espeak-ng (`third-party/espeak-ng`) once, or
-reuse the data directory already bundled with the iOS app.
+-> `<dataDir>/espeak-ng-data` -> native auto-discovery. The sample app (in
+piper-app-android) copies `app/src/main/assets/espeak-ng-data/` to filesDir on
+first launch. Stage it there by compiling the vendored espeak-ng
+(`third-party/espeak-ng`) once, or reuse the data directory already bundled
+with the iOS app.
 
 ## Voice files
 

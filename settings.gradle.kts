@@ -13,4 +13,4 @@ dependencyResolutionManagement {
     }
 }
 rootProject.name = "piper-android"
-include(":app", ":piper-engine", ":piper-utils", ":piper-player")
+include(":piper-engine", ":piper-utils", ":piper-player")
