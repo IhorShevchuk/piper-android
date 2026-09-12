@@ -1,0 +1,11 @@
+#pragma once
+// Mirrors the espeak-ng-spm config.h (iOS known-good configuration).
+#define HAVE_MKSTEMP 0
+#define USE_ASYNC 0
+#define USE_KLATT 1
+#define USE_LIBPCAUDIO 0
+#define USE_LIBSONIC 1
+#define USE_MBROLA 0
+#define USE_SPEECHPLAYER 1
+
+#define PACKAGE_VERSION "1.52-dev"

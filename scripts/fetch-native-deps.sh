@@ -2,11 +2,12 @@
 # Vendors the native dependencies into third-party/:
 #   third-party/piper1-gpl    OHF-Voice/piper1-gpl (libpiper C++ core)
 #   third-party/espeak-ng     espeak-ng/espeak-ng (phonemization)
+#   third-party/sonic         waywardgeek/sonic (used by espeak-ng speech.c)
 #   third-party/onnxruntime   onnxruntime C/C++ headers + per-ABI .so files
 #                             (extracted from the onnxruntime-android AAR)
 #
 # The Gradle build passes these roots to CMake as PIPER1_GPL_DIR,
-# ESPEAK_NG_DIR and ONNXRUNTIME_DIR - see piper-engine/build.gradle.kts.
+# ESPEAK_NG_DIR, SONIC_DIR and ONNXRUNTIME_DIR - see piper-engine/build.gradle.kts.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -17,6 +18,7 @@ mkdir -p "$TP"
 # branch once; the script prints the resolved SHA so you can pin it.
 PIPER1_GPL_SHA="${PIPER1_GPL_SHA:-}"
 ESPEAK_NG_SHA="${ESPEAK_NG_SHA:-}"
+SONIC_SHA="${SONIC_SHA:-}"
 
 clone_pinned() {
   local repo="$1" dir="$2" sha="$3" name="$4"
@@ -40,6 +42,8 @@ clone_pinned "https://github.com/OHF-Voice/piper1-gpl" \
   "$TP/piper1-gpl" "$PIPER1_GPL_SHA" "PIPER1_GPL"
 clone_pinned "https://github.com/espeak-ng/espeak-ng" \
   "$TP/espeak-ng" "$ESPEAK_NG_SHA" "ESPEAK_NG"
+clone_pinned "https://github.com/waywardgeek/sonic" \
+  "$TP/sonic" "$SONIC_SHA" "SONIC"
 
 # --- onnxruntime -----------------------------------------------------------
 ORT_VERSION="1.22.0"
@@ -74,6 +78,7 @@ echo
 echo "Native deps ready. Gradle passes these to CMake automatically:"
 echo "  -DPIPER1_GPL_DIR=$TP/piper1-gpl"
 echo "  -DESPEAK_NG_DIR=$TP/espeak-ng"
+echo "  -DSONIC_DIR=$TP/sonic"
 echo "  -DONNXRUNTIME_DIR=$TP/onnxruntime"
 echo
 echo "Next: stage espeak-ng-data for the app (see README 'espeak-ng-data packaging'),"

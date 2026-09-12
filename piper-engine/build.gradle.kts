@@ -16,6 +16,7 @@ android {
                 arguments(
                     "-DPIPER1_GPL_DIR=${rootDir}/third-party/piper1-gpl",
                     "-DESPEAK_NG_DIR=${rootDir}/third-party/espeak-ng",
+                    "-DSONIC_DIR=${rootDir}/third-party/sonic",
                     "-DONNXRUNTIME_DIR=${rootDir}/third-party/onnxruntime"
                 )
                 abiFilters("arm64-v8a", "armeabi-v7a", "x86_64")
