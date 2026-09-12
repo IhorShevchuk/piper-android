@@ -33,6 +33,7 @@ class PiperPlayer {
         engine: PiperEngine,
         text: String,
         rate: Float = 1.0f,
+        speakerId: Int = 0,
         onMarker: (positionMs: Long) -> Unit = {}
     ) {
         stop()
@@ -41,7 +42,7 @@ class PiperPlayer {
         val exec: ExecutorService =
             Executors.newSingleThreadExecutor { r -> Thread(r, "piper-player") }
         worker.set(exec)
-        exec.execute { runPlayback(engine, text, rate, onMarker) }
+        exec.execute { runPlayback(engine, text, rate, speakerId, onMarker) }
     }
 
     fun stop() {
@@ -54,12 +55,16 @@ class PiperPlayer {
         engine: PiperEngine,
         text: String,
         rate: Float,
+        speakerId: Int,
         onMarker: (positionMs: Long) -> Unit
     ) {
         var track: AudioTrack? = null
         try {
             val synthOptions = engine.defaultSynthesizeOptions()
-                .copy(lengthScale = SpeedCurve.lengthScaleForRate(rate))
+                .copy(
+                    lengthScale = SpeedCurve.lengthScaleForRate(rate),
+                    speakerId = speakerId
+                )
             var samplesWritten = 0L
             for (sentence in SentenceSplitter.split(text)) {
                 if (stopped.get()) break
