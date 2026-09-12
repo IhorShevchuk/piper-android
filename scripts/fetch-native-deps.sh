@@ -69,7 +69,7 @@ for abi in arm64-v8a armeabi-v7a x86_64; do
 done
 
 echo "== downloading onnxruntime C/C++ headers (v$ORT_VERSION)"
-for h in onnxruntime_c_api.h onnxruntime_cxx_api.h onnxruntime_cxx_inline.h; do
+for h in onnxruntime_c_api.h onnxruntime_cxx_api.h onnxruntime_cxx_inline.h onnxruntime_float16.h; do
   curl -fL -o "$ORT_DIR/include/$h" \
     "https://raw.githubusercontent.com/microsoft/onnxruntime/v${ORT_VERSION}/include/onnxruntime/core/session/$h"
 done
