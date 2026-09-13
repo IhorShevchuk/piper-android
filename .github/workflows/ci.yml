@@ -84,11 +84,11 @@ jobs:
           path: |
             ${{ env.ANDROID_HOME }}/ndk
             ${{ env.ANDROID_HOME }}/system-images
-          key: android-emu-${{ env.NDK_VERSION }}-api30-${{ runner.os }}
+          key: android-emu-${{ env.NDK_VERSION }}-api30-arm64-${{ runner.os }}
       - name: Install Android packages
         run: >
           sdkmanager "platforms;android-35" "build-tools;35.0.0"
-          "ndk;$NDK_VERSION" "system-images;android-30;google_apis;x86_64"
+          "ndk;$NDK_VERSION" "system-images;android-30;google_apis;arm64-v8a"
       - name: Fetch native deps
         run: ./scripts/fetch-native-deps.sh
       - name: Cache staged espeak-ng-data
@@ -105,7 +105,7 @@ jobs:
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 30
-          arch: x86_64
+          arch: arm64-v8a
           target: google_apis
           emulator-options: -no-snapshot -no-audio -no-boot-anim
           script: |
