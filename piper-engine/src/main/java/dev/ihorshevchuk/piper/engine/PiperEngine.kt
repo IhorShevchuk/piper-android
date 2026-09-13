@@ -1,10 +1,10 @@
 package dev.ihorshevchuk.piper.engine
 
-import dev.ihorshevchuk.piper.utils.SentenceSplitter
+import dev.ihorshevchuk.piper.utils.MemoryInfo
+import dev.ihorshevchuk.piper.utils.PhonemeGroup
+import dev.ihorshevchuk.piper.utils.SpeechMarker
+import dev.ihorshevchuk.piper.utils.SynthesisPlanner
 import java.io.File
-import java.io.FileOutputStream
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 import java.util.concurrent.Callable
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -61,6 +61,13 @@ class PiperEngine(
 
     private val handle: Long
 
+    /**
+     * Sentence orchestration (port of Piper.doSynthesize) running on the
+     * calling thread; every native call funnels through [JniSynth], which
+     * serializes onto the engine thread via [runNative].
+     */
+    private val orchestrator = SynthesisOrchestrator(JniSynth())
+
     init {
         val modelFile = File(options.modelPath)
         if (!modelFile.isFile) {
@@ -86,8 +93,10 @@ class PiperEngine(
      * Synthesizes [text] sentence by sentence.
      *
      * For each sentence [onSamples] receives raw float32 PCM chunks as they are
-     * produced; [onAlignment] receives the chunk's phoneme codepoints and their
-     * per-phoneme sample counts (parallel arrays, piper.h grouping applies).
+     * produced; [onAlignment] receives the chunk's [PhonemeGroup]s (piper.h
+     * grouping rule); [onMarkers] receives sentence/word [SpeechMarker]s with
+     * cumulative float32 byte offsets into the utterance (alignment-aware when
+     * groups exist, legacy character-proportion otherwise).
      *
      * Resilience (Sawyer long-utterance fix, ported from Swift): if
      * piper_synthesize_start fails for a sentence with PIPER_ERR_GENERIC, that
@@ -98,49 +107,54 @@ class PiperEngine(
         text: String,
         synthOptions: PiperSynthesizeOptions? = null,
         onSamples: (FloatArray) -> Unit,
-        onAlignment: (phonemes: IntArray, alignments: IntArray) -> Unit = { _, _ -> }
+        onAlignment: (List<PhonemeGroup>) -> Unit = {},
+        onMarkers: (List<SpeechMarker>) -> Unit = {}
     ) {
         val opts = synthOptions ?: defaultSynthesizeOptions()
         cancelled.set(false)
-        for (sentence in SentenceSplitter.split(text)) {
-            if (cancelled.get()) break
-            val rc = runNative("piper_synthesize_start") {
-                nativeSynthesizeStart(
-                    handle, sentence,
-                    opts.speakerId, opts.lengthScale, opts.noiseScale, opts.noiseWScale
-                )
-            }
-            if (rc == PIPER_ERR_GENERIC) continue // skip failed sentence, keep going
-            if (rc != PIPER_OK) {
-                throw PiperException(
-                    "piper_synthesize_start failed (rc=$rc) for sentence: ${sentence.take(64)}"
-                )
-            }
-            while (true) {
-                if (cancelled.get()) break
-                // null == PIPER_DONE (or a mid-sentence error: partial audio is kept)
-                val chunk: FloatArray = runNative("piper_synthesize_next") {
-                    nativeSynthesizeNext(handle)
-                } ?: break
-                currentSampleRate.set(runNative("piper_last_chunk_sample_rate") {
-                    nativeLastChunkSampleRate(handle)
-                })
-                onSamples(chunk)
-                val phonemes = runNative("piper_last_chunk_phonemes") {
-                    nativeLastChunkPhonemes(handle)
-                }
-                val alignments = runNative("piper_last_chunk_alignments") {
-                    nativeLastChunkAlignments(handle)
-                }
-                if (phonemes != null && alignments != null) {
-                    onAlignment(phonemes, alignments)
-                }
-                val isLast = runNative("piper_last_chunk_is_last") {
-                    nativeLastChunkIsLast(handle)
-                }
-                if (isLast) break
-            }
-        }
+        orchestrator.synthesize(
+            planned = SynthesisPlanner.plan(text),
+            resolveOptions = { opts },
+            isCancelled = { cancelled.get() },
+            callbacks = SynthesisOrchestrator.Callbacks(
+                onSamples = onSamples,
+                onAlignment = onAlignment,
+                onMarkers = onMarkers,
+                onSampleRate = { currentSampleRate.set(it) }
+            )
+        )
+    }
+
+    /**
+     * Synthesizes [ssml], applying each fragment's prosody rate as the
+     * sentence lengthScale (port of Piper.synthesizeSSML).
+     *
+     * [speakerId] overrides the voice default for every fragment; each
+     * fragment's rate resolves through [SpeedCurve.lengthScaleForRate].
+     * Marker ranges are offsets into the concatenated SSML plain text.
+     */
+    fun synthesizeSsml(
+        ssml: String,
+        speakerId: Int,
+        onSamples: (FloatArray) -> Unit,
+        onAlignment: (List<PhonemeGroup>) -> Unit = {},
+        onMarkers: (List<SpeechMarker>) -> Unit = {}
+    ) {
+        val base = defaultSynthesizeOptions()
+        cancelled.set(false)
+        val resolved = resolveSsmlPlan(ssml, base, speakerId)
+        val optionsBySentence = resolved.associate { it.sentence to it.options }
+        orchestrator.synthesize(
+            planned = resolved.map { it.sentence },
+            resolveOptions = { optionsBySentence.getValue(it) },
+            isCancelled = { cancelled.get() },
+            callbacks = SynthesisOrchestrator.Callbacks(
+                onSamples = onSamples,
+                onAlignment = onAlignment,
+                onMarkers = onMarkers,
+                onSampleRate = { currentSampleRate.set(it) }
+            )
+        )
     }
 
     /**
@@ -163,6 +177,28 @@ class PiperEngine(
         out.parentFile?.mkdirs()
         writeWavFloatMono(out, chunks, sampleRate)
     }
+
+    /**
+     * Synthesizes [ssml] and writes it to [path] as a WAV file (same layout as
+     * [synthesizeToFile]; port of Piper.synthesizeSSML toFileAtPath).
+     */
+    fun synthesizeSsmlToFile(ssml: String, speakerId: Int, path: String) {
+        val chunks = mutableListOf<FloatArray>()
+        var sampleRate = currentSampleRate.get()
+        synthesizeSsml(ssml, speakerId, onSamples = { chunk ->
+            chunks.add(chunk)
+            sampleRate = currentSampleRate.get()
+        })
+        val out = File(path)
+        out.parentFile?.mkdirs()
+        writeWavFloatMono(out, chunks, sampleRate)
+    }
+
+    /**
+     * Current process memory usage in bytes, or null when it cannot be
+     * determined. Mirrors Piper.getMemoryUsage() (piper-objc).
+     */
+    fun getMemoryUsage(): Long? = MemoryInfo.getMemoryUsage()
 
     /** Reads the voice's default synthesis options from the native layer. */
     fun defaultSynthesizeOptions(): PiperSynthesizeOptions {
@@ -194,6 +230,44 @@ class PiperEngine(
             // Best effort: the process is tearing the engine down anyway.
         }
         executor.shutdown()
+    }
+
+    /**
+     * [NativeSynth] backed by JNI. Each call is serialized onto the engine
+     * thread through [runNative]; the orchestrator itself runs on the caller
+     * thread, so these must never be wrapped in another [runNative] (that
+     * would deadlock the single-thread executor).
+     */
+    private inner class JniSynth : NativeSynth {
+        override fun start(sentence: String, options: PiperSynthesizeOptions): Int {
+            val rc = runNative("piper_synthesize_start") {
+                nativeSynthesizeStart(
+                    handle, sentence,
+                    options.speakerId, options.lengthScale,
+                    options.noiseScale, options.noiseWScale
+                )
+            }
+            if (rc != NativeSynth.OK && rc != NativeSynth.ERR_GENERIC) {
+                throw PiperException(
+                    "piper_synthesize_start failed (rc=$rc) for sentence: ${sentence.take(64)}"
+                )
+            }
+            return rc
+        }
+
+        override fun next(): AudioChunk? =
+            runNative("piper_synthesize_next") {
+                // null == PIPER_DONE (or a mid-sentence error: partial audio is kept)
+                val samples = nativeSynthesizeNext(handle) ?: return@runNative null
+                AudioChunk(
+                    samples = samples,
+                    sampleRate = nativeLastChunkSampleRate(handle),
+                    phonemes = nativeLastChunkPhonemes(handle),
+                    phonemeIds = nativeLastChunkPhonemeIds(handle),
+                    alignments = nativeLastChunkAlignments(handle),
+                    isLast = nativeLastChunkIsLast(handle)
+                )
+            }
     }
 
     private fun <T> runNative(name: String, block: () -> T): T {
@@ -231,39 +305,6 @@ class PiperEngine(
         return null
     }
 
-    private fun writeWavFloatMono(file: File, chunks: List<FloatArray>, sampleRate: Int) {
-        FileOutputStream(file).use { fos ->
-            val header = ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN)
-            header.put("RIFF".toByteArray(Charsets.US_ASCII))
-            header.putInt(-1) // RIFF chunk size: unspecified (streamed), like Swift
-            header.put("WAVE".toByteArray(Charsets.US_ASCII))
-            header.put("fmt ".toByteArray(Charsets.US_ASCII))
-            header.putInt(16) // fmt chunk size
-            header.putShort(3) // IEEE float
-            header.putShort(1) // mono
-            header.putInt(sampleRate)
-            header.putInt(sampleRate * 4) // byte rate: sampleRate * channels * bytesPerSample
-            header.putShort(4) // block align
-            header.putShort(32) // bits per sample
-            header.put("data".toByteArray(Charsets.US_ASCII))
-            header.putInt(-1) // data chunk size: unspecified, like Swift
-            fos.write(header.array())
-
-            val buf = ByteBuffer.allocate(8192).order(ByteOrder.LITTLE_ENDIAN)
-            for (chunk in chunks) {
-                var i = 0
-                while (i < chunk.size) {
-                    buf.clear()
-                    while (i < chunk.size && buf.remaining() >= 4) {
-                        buf.putFloat(chunk[i++])
-                    }
-                    buf.flip()
-                    fos.write(buf.array(), 0, buf.limit())
-                }
-            }
-        }
-    }
-
     // ------------------------------------------------------------------
     // JNI. Instance methods so the bindings use the plain
     // Java_dev_ihorshevchuk_piper_engine_PiperEngine_nativeXxx names.
@@ -292,7 +333,11 @@ class PiperEngine(
         noiseWScale: Float
     ): Int
 
-    /** Returns the next PCM chunk, or null at PIPER_DONE (or on error). */
+    /**
+     * Returns the next PCM chunk, or null at PIPER_DONE (or on error: partial
+     * audio is kept). May return an empty array when the chunk carries only
+     * alignment data (e.g. punctuation); null is reserved for end of sentence.
+     */
     private external fun nativeSynthesizeNext(handle: Long): FloatArray?
 
     private external fun nativeLastChunkSampleRate(handle: Long): Int
@@ -300,6 +345,8 @@ class PiperEngine(
     private external fun nativeLastChunkIsLast(handle: Long): Boolean
 
     private external fun nativeLastChunkPhonemes(handle: Long): IntArray?
+
+    private external fun nativeLastChunkPhonemeIds(handle: Long): IntArray?
 
     private external fun nativeLastChunkAlignments(handle: Long): IntArray?
 

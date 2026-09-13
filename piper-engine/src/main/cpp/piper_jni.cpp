@@ -40,6 +40,7 @@ struct EngineContext {
   int lastSampleRate = 22050;
   bool lastIsLast = false;
   std::vector<int> lastPhonemes;
+  std::vector<int> lastPhonemeIds;
   std::vector<int> lastAlignments;
 };
 
@@ -174,6 +175,12 @@ Java_dev_ihorshevchuk_piper_engine_PiperEngine_nativeSynthesizeNext(
   } else {
     ctx->lastPhonemes.clear();
   }
+  if (chunk.phoneme_ids != nullptr && chunk.num_phoneme_ids > 0) {
+    ctx->lastPhonemeIds.assign(chunk.phoneme_ids,
+                               chunk.phoneme_ids + chunk.num_phoneme_ids);
+  } else {
+    ctx->lastPhonemeIds.clear();
+  }
   if (chunk.alignments != nullptr && chunk.num_alignments > 0) {
     ctx->lastAlignments.assign(chunk.alignments,
                                chunk.alignments + chunk.num_alignments);
@@ -182,7 +189,10 @@ Java_dev_ihorshevchuk_piper_engine_PiperEngine_nativeSynthesizeNext(
   }
 
   if (chunk.samples == nullptr || chunk.num_samples == 0) {
-    return nullptr;
+    // Alignment-only chunk (e.g. punctuation): return an empty, non-null
+    // array so Kotlin can still harvest the alignment. Null is reserved for
+    // PIPER_DONE / PIPER_ERR (end of sentence).
+    return env->NewFloatArray(0);
   }
   jfloatArray out =
       env->NewFloatArray(static_cast<jsize>(chunk.num_samples));
@@ -212,6 +222,14 @@ Java_dev_ihorshevchuk_piper_engine_PiperEngine_nativeLastChunkPhonemes(
   EngineContext* ctx = ToContext(handle);
   if (ctx == nullptr) return nullptr;
   return ToJIntArray(env, ctx->lastPhonemes);
+}
+
+JNIEXPORT jintArray JNICALL
+Java_dev_ihorshevchuk_piper_engine_PiperEngine_nativeLastChunkPhonemeIds(
+    JNIEnv* env, jobject /*thiz*/, jlong handle) {
+  EngineContext* ctx = ToContext(handle);
+  if (ctx == nullptr) return nullptr;
+  return ToJIntArray(env, ctx->lastPhonemeIds);
 }
 
 JNIEXPORT jintArray JNICALL

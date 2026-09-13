@@ -1,4 +1,4 @@
-package dev.ihorshevchuk.piper.player
+package dev.ihorshevchuk.piper.utils
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue

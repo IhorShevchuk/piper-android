@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Integration tests download the test voice model from Hugging Face. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+</manifest>
