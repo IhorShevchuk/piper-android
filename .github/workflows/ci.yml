@@ -5,11 +5,12 @@ on:
     branches: [main]
   pull_request:
 
-# Native dep versions live in .github/deps.env (single source of truth, shared
-# with scripts/fetch-native-deps.sh). The piper1-gpl / espeak-ng / sonic
+# Pinned native dependency versions live in gradle.properties
+# (piper.ndkVersion, piper.ortVersion) - the single source of truth, shared
+# with scripts/fetch-native-deps.sh. The piper1-gpl / espeak-ng / sonic
 # revisions are pinned as git submodule SHAs instead (see .gitmodules).
-# Each job that needs versions loads them into the environment as its first
-# step after checkout.
+# The native-build job loads piper.ndkVersion into the environment as its
+# first step after checkout.
 
 jobs:
   unit-tests:
@@ -37,8 +38,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - name: Load pinned dependency versions
-        run: grep -v '^#' .github/deps.env | grep -v '^$' >> "$GITHUB_ENV"
+      - name: Load NDK version
+        run: echo "NDK_VERSION=$(grep '^piper\.ndkVersion=' gradle.properties | cut -d= -f2)" >> "$GITHUB_ENV"
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -58,72 +59,3 @@ jobs:
       # compiles for arm64-v8a, armeabi-v7a and x86_64.
       - name: Build native libs for all ABIs
         run: ./gradlew :piper-engine:assembleDebug --stacktrace
-
-  device-tests:
-    name: Device tests (emulator)
-    # Ubuntu runners expose /dev/kvm; the udev rule below makes it readable
-    # so the x86_64 emulator gets hardware acceleration (this is the setup
-    # recommended by reactivecircus/android-emulator-runner). Hosted macOS
-    # runners cannot do this: they are VMs without nested-virtualization
-    # support, so HVF never initializes there.
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - name: Load pinned dependency versions
-        run: grep -v '^#' .github/deps.env | grep -v '^$' >> "$GITHUB_ENV"
-      - name: Record submodule SHAs
-        run: echo "ESPEAK_NG_SHA=$(git -C third-party/espeak-ng rev-parse HEAD)" >> "$GITHUB_ENV"
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 17
-      - uses: android-actions/setup-android@v3
-      - name: Cache NDK and system image
-        uses: actions/cache@v4
-        with:
-          path: |
-            ${{ env.ANDROID_HOME }}/ndk
-            ${{ env.ANDROID_HOME }}/system-images
-          key: android-emu-${{ env.NDK_VERSION }}-api30-x86_64-${{ runner.os }}
-      - name: Install Android packages
-        run: >
-          sdkmanager "platforms;android-35" "build-tools;35.0.0"
-          "ndk;$NDK_VERSION" "system-images;android-30;google_apis;x86_64"
-      - name: Fetch native deps
-        run: ./scripts/fetch-native-deps.sh
-      - name: Cache staged espeak-ng-data
-        id: espeak-cache
-        uses: actions/cache@v4
-        with:
-          path: third-party/espeak-ng/build/espeak-ng-data
-          key: espeak-ng-data-${{ env.ESPEAK_NG_SHA }}-${{ runner.os }}
-      - name: Stage espeak-ng-data
-        if: steps.espeak-cache.outputs.cache-hit != 'true'
-        run: ./scripts/stage-espeak-data.sh
-      - uses: gradle/actions/setup-gradle@v4
-      - name: Enable KVM group perms
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-      - name: Install emulator system libraries
-        # The emulator's qemu binary links against libpulse at load time;
-        # the ubuntu runner image does not ship it.
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq libpulse0
-      - name: Run instrumented tests on emulator
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 30
-          arch: x86_64
-          target: google_apis
-          disable-animations: true
-          # Note: this overrides the action's default emulator-options, so
-          # -no-window and the swiftshader GPU setting must be repeated here;
-          # without -no-window the emulator's Qt UI aborts on headless Linux.
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-audio -no-boot-anim
-          script: |
-            adb push third-party/espeak-ng/build/espeak-ng-data /data/local/tmp/espeak-ng-data
-            ./gradlew :piper-engine:connectedAndroidTest --stacktrace

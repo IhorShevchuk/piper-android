@@ -8,7 +8,7 @@
 #
 # The submodule SHAs are pinned as gitlinks - bump with e.g.
 #   git -C third-party/piper1-gpl checkout <new-sha> && git add third-party/piper1-gpl
-# Other versions live in .github/deps.env (ORT_VERSION, NDK_VERSION).
+# Other versions live in gradle.properties (piper.ortVersion, piper.ndkVersion).
 # The Gradle build passes these roots to CMake as PIPER1_GPL_DIR,
 # ESPEAK_NG_DIR, SONIC_DIR and ONNXRUNTIME_DIR - see piper-engine/build.gradle.kts.
 set -euo pipefail
@@ -17,8 +17,11 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TP="$ROOT/third-party"
 mkdir -p "$TP"
 
-# shellcheck disable=SC1091
-[ -f "$ROOT/.github/deps.env" ] && . "$ROOT/.github/deps.env"
+# Pinned versions come from gradle.properties (single source of truth);
+# the environment still overrides them when set.
+if [ -z "${ORT_VERSION:-}" ]; then
+  ORT_VERSION="$(grep '^piper\.ortVersion=' "$ROOT/gradle.properties" | cut -d= -f2)"
+fi
 ORT_VERSION="${ORT_VERSION:-1.22.0}"
 
 echo "== initializing submodules at their pinned SHAs"
