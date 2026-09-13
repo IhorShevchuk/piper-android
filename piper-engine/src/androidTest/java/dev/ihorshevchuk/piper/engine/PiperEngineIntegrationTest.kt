@@ -77,6 +77,18 @@ class PiperEngineIntegrationTest {
         }
     }
 
+    // TEMPORARY DEVICE DIAGNOSTIC (2026-09-13): probes the espeak voice
+    // chain directly to root-cause the 0-samples failure. Fails on purpose
+    // so the report lands in the HTML test report. Remove once fixed.
+    @Test
+    fun espeakVoiceDiagnosis() {
+        val args = InstrumentationRegistry.getArguments()
+        val espeakDataPath = args.getString("espeakDataPath") ?: "<missing>"
+        val report = engine.diagnoseEspeak(espeakDataPath)
+        println("ESPEAK DIAGNOSTIC:\n$report")
+        throw AssertionError("ESPEAK DIAGNOSTIC:\n$report")
+    }
+
     @Test
     fun engineInitializesAndReportsVersion() {
         assertNotNull(engine)

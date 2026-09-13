@@ -22,8 +22,11 @@
 //       const int* alignments; size_t num_alignments; };
 
 #include <jni.h>
+#include <android/log.h>
+#include <espeak-ng/speak_lib.h>
 
 #include <cstring>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -245,6 +248,52 @@ Java_dev_ihorshevchuk_piper_engine_PiperEngine_nativeVersion(
     JNIEnv* env, jobject /*thiz*/) {
   const char* v = piper_version();
   return env->NewStringUTF(v != nullptr ? v : "unknown");
+}
+
+// TEMPORARY DEVICE DIAGNOSTIC for the 0-samples failure (2026-09-13).
+// Probes the espeak voice-resolution chain directly and returns a report.
+// Remove once the root cause is fixed.
+JNIEXPORT jstring JNICALL
+Java_dev_ihorshevchuk_piper_engine_PiperEngine_nativeDiagnoseEspeak(
+    JNIEnv* env, jobject /*thiz*/, jstring jpath) {
+  const std::string path = JStringToStdString(env, jpath);
+  std::ostringstream out;
+  out << "path=" << path << "\n";
+
+  int rc = espeak_Initialize(AUDIO_OUTPUT_SYNCHRONOUS, 0, path.c_str(),
+                            espeakINITIALIZE_DONT_EXIT);
+  out << "espeak_Initialize rc=" << rc << " (sample rate on success)\n";
+
+  const espeak_VOICE** voices = espeak_ListVoices(nullptr);
+  int n = 0;
+  std::string enIds;
+  for (; voices != nullptr && voices[n] != nullptr; ++n) {
+    const char* id = voices[n]->identifier;
+    if (id != nullptr && strstr(id, "en") != nullptr) {
+      enIds += "  id=";
+      enIds += id;
+      enIds += " name=";
+      enIds += voices[n]->name != nullptr ? voices[n]->name : "?";
+      enIds += "\n";
+    }
+  }
+  out << "voiceCount=" << n << "\n";
+  out << "enVoices:\n" << (enIds.empty() ? "  <none>\n" : enIds);
+
+  espeak_ERROR e1 = espeak_SetVoiceByName("en-us");
+  out << "SetVoiceByName(en-us)=" << static_cast<int>(e1) << " (EE_OK=0)\n";
+  espeak_ERROR e2 = espeak_SetVoiceByName("en");
+  out << "SetVoiceByName(en)=" << static_cast<int>(e2) << "\n";
+
+  const char* text = "hello";
+  const void* tp = text;
+  const char* ph =
+      espeak_TextToPhonemes(&tp, espeakCHARS_AUTO, espeakPHONEMES_IPA);
+  out << "phonemes(hello)=" << (ph != nullptr ? ph : "<null>") << "\n";
+
+  const std::string s = out.str();
+  __android_log_print(ANDROID_LOG_ERROR, "PiperDiag", "%s", s.c_str());
+  return env->NewStringUTF(s.c_str());
 }
 
 }  // extern "C"
