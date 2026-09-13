@@ -1,6 +1,6 @@
-# piper-android
+# piper-kotlin
 
-[![CI](https://github.com/IhorShevchuk/piper-android/actions/workflows/ci.yml/badge.svg)](https://github.com/IhorShevchuk/piper-android/actions/workflows/ci.yml)
+[![CI](https://github.com/IhorShevchuk/piper-kotlin/actions/workflows/ci.yml/badge.svg)](https://github.com/IhorShevchuk/piper-kotlin/actions/workflows/ci.yml)
 
 Android port of piper-objc / piper-app. Same voices, same engine behavior,
 same speed curve - Kotlin and JNI instead of Swift.

@@ -12,5 +12,5 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "piper-android"
+rootProject.name = "piper-kotlin"
 include(":piper-engine", ":piper-utils", ":piper-player")

@@ -19,7 +19,8 @@ fi
 
 echo "== building host espeak-ng"
 cmake -S "$ESPEAK" -B "$BUILD" -DCMAKE_BUILD_TYPE=Release > /dev/null
-cmake --build "$BUILD" --target espeak-ng-bin -j"$(nproc)" > /dev/null
+NPROC="$(nproc 2>/dev/null || sysctl -n hw.ncpu)"
+cmake --build "$BUILD" --target espeak-ng-bin -j"$NPROC" > /dev/null
 
 echo "== staging runtime data"
 mkdir -p "$DATA"

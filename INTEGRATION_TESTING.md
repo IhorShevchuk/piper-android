@@ -1,4 +1,4 @@
-# piper-android integration testing (M4 + physical device)
+# piper-kotlin integration testing (M4 + physical device)
 
 Unit tests (`:piper-utils:test`, `:engine-jvm:test` via the sandbox scratch
 settings) cover the pure-Kotlin core. The tests in

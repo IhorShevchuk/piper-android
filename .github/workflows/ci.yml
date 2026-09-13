@@ -5,9 +5,11 @@ on:
     branches: [main]
   pull_request:
 
-# Native dep pins live in .github/deps.env (single source of truth, shared
-# with scripts/fetch-native-deps.sh). Each job loads them into the
-# environment as its first step.
+# Native dep versions live in .github/deps.env (single source of truth, shared
+# with scripts/fetch-native-deps.sh). The piper1-gpl / espeak-ng / sonic
+# revisions are pinned as git submodule SHAs instead (see .gitmodules).
+# Each job that needs versions loads them into the environment as its first
+# step after checkout.
 
 jobs:
   unit-tests:
@@ -15,8 +17,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Load pinned dependency revisions
-        run: grep -v '^#' .github/deps.env | grep -v '^$' >> "$GITHUB_ENV"
+        with:
+          submodules: recursive
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -33,7 +35,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Load pinned dependency revisions
+        with:
+          submodules: recursive
+      - name: Load pinned dependency versions
         run: grep -v '^#' .github/deps.env | grep -v '^$' >> "$GITHUB_ENV"
       - uses: actions/setup-java@v4
         with:
@@ -44,7 +48,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.ANDROID_HOME }}/ndk
-          key: ndk-${{ env.NDK_VERSION }}
+          key: ndk-${{ env.NDK_VERSION }}-${{ runner.os }}
       - name: Install Android packages
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;$NDK_VERSION"
       - name: Fetch native deps
@@ -57,12 +61,18 @@ jobs:
 
   device-tests:
     name: Device tests (emulator)
-    runs-on: ubuntu-latest
+    # macOS runners have hardware acceleration for the x86_64 emulator;
+    # the Linux runners do not (software emulation never finishes booting).
+    runs-on: macos-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-      - name: Load pinned dependency revisions
+        with:
+          submodules: recursive
+      - name: Load pinned dependency versions
         run: grep -v '^#' .github/deps.env | grep -v '^$' >> "$GITHUB_ENV"
+      - name: Record submodule SHAs
+        run: echo "ESPEAK_NG_SHA=$(git -C third-party/espeak-ng rev-parse HEAD)" >> "$GITHUB_ENV"
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -74,7 +84,7 @@ jobs:
           path: |
             ${{ env.ANDROID_HOME }}/ndk
             ${{ env.ANDROID_HOME }}/system-images
-          key: android-emu-${{ env.NDK_VERSION }}-api30
+          key: android-emu-${{ env.NDK_VERSION }}-api30-${{ runner.os }}
       - name: Install Android packages
         run: >
           sdkmanager "platforms;android-35" "build-tools;35.0.0"
@@ -86,7 +96,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: third-party/espeak-ng/build/espeak-ng-data
-          key: espeak-ng-data-${{ env.ESPEAK_NG_SHA }}
+          key: espeak-ng-data-${{ env.ESPEAK_NG_SHA }}-${{ runner.os }}
       - name: Stage espeak-ng-data
         if: steps.espeak-cache.outputs.cache-hit != 'true'
         run: ./scripts/stage-espeak-data.sh

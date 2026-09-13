@@ -1,0 +1,9 @@
+[submodule "third-party/piper1-gpl"]
+	path = third-party/piper1-gpl
+	url = https://github.com/OHF-Voice/piper1-gpl
+[submodule "third-party/espeak-ng"]
+	path = third-party/espeak-ng
+	url = https://github.com/espeak-ng/espeak-ng
+[submodule "third-party/sonic"]
+	path = third-party/sonic
+	url = https://github.com/waywardgeek/sonic
