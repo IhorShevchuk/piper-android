@@ -101,22 +101,30 @@ class PiperEngineBehaviorTest {
     }
 
     @Test
-    fun alignmentCallback_receivesPhonemeGroups() {
+    fun alignmentCallback_noGroupsForSingleOutputModel() {
+        // The catalog voices are standard single-output VITS models: piper1-gpl
+        // only fills chunk->alignments when the model graph has a second output
+        // tensor (verified by parsing en_US-lessac-medium.onnx: its graph
+        // outputs are ["output"]). So onAlignment never fires here, and word
+        // markers fall back to the character-proportion path. This test pins
+        // that contract: audio plus markers, zero alignment groups.
         val groups = CopyOnWriteArrayList<PhonemeGroup>()
+        val markerBatches = AtomicInteger(0)
+        val total = AtomicInteger(0)
         engine.synthesize(
-            "Alignment callback test.",
-            onSamples = {},
-            onAlignment = { groups += it }
+            "Alignment fallback test.",
+            onSamples = { total.addAndGet(it.size) },
+            onAlignment = { groups += it },
+            onMarkers = { markerBatches.incrementAndGet() }
         )
-        assertTrue("expected phoneme groups, got none", groups.isNotEmpty())
+        assertTrue("expected audio samples, got ${total.get()}", total.get() > 1000)
         assertTrue(
-            "groups with no audio: ${groups.count { it.sampleCount <= 0 }}",
-            groups.all { it.sampleCount > 0 }
+            "expected no alignment groups from a single-output model, got ${groups.size}",
+            groups.isEmpty()
         )
-        val offsets = groups.map { it.cumulativeOffsetBefore }
         assertTrue(
-            "cumulative offsets not monotonic: $offsets",
-            offsets.zipWithNext().all { (a, b) -> b >= a }
+            "expected sentence markers via the fallback path",
+            markerBatches.get() > 0
         )
     }
 

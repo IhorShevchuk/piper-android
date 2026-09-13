@@ -49,10 +49,21 @@ The suite downloads the `en_US-lessac-medium` fp16 voice (~32 MB) from
   (first == 0, monotonic), stop-during-startup recovery (regression test
   for the 2adec86 crash), and `synthesizeToFile` WAV validity.
 - `PiperEngineBehaviorTest`: `cancel()` stops a 30-sentence synthesis
-  between sentences; `onAlignment` emits phoneme groups with positive
-  sample counts and monotonic cumulative offsets; a missing model file
-  throws `PiperException`; `close()` is idempotent; the public
-  `recreateSynthesizer()` leaves the engine usable.
+  between sentences; single-output models emit no alignment groups
+  (verified against the lessac graph: outputs == `["output"]`), so
+  `onAlignment` stays silent and markers use the character-proportion
+  fallback; a missing model file throws `PiperException`; `close()` is
+  idempotent; the public `recreateSynthesizer()` leaves the engine usable.
+
+> **Device-test lesson (2026-09-13):** espeak-ng is process-global, but
+> `piper_free()` used to call `espeak_Terminate()` per synthesizer. Closing
+> one `PiperEngine` while another was alive killed espeak for the whole
+> process (later syntheses silently produced nothing) and a second
+> terminate/re-init crashed the run. The vendored
+> `third-party/piper1-gpl/libpiper/src/piper.cpp` now shares espeak through
+> a refcount (init once, terminate on last free) and no longer lets C++
+> exceptions (`json::parse`, `Ort::Session`) escape the C API - they return
+> `nullptr` so Kotlin raises `PiperException` instead of aborting.
 
 ## App-side wiring (piper-app-android)
 
