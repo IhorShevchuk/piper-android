@@ -14,8 +14,12 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TP="$ROOT/third-party"
 mkdir -p "$TP"
 
-# Pin to tested SHAs for reproducible builds. Leave empty to track the default
-# branch once; the script prints the resolved SHA so you can pin it.
+# Pinned revisions live in .github/deps.env (single source of truth, shared
+# with CI). Environment variables override the file when set. Leave a SHA
+# empty to track the default branch once; the script prints the resolved SHA
+# so you can pin it in .github/deps.env.
+# shellcheck disable=SC1091
+[ -f "$ROOT/.github/deps.env" ] && . "$ROOT/.github/deps.env"
 PIPER1_GPL_SHA="${PIPER1_GPL_SHA:-}"
 ESPEAK_NG_SHA="${ESPEAK_NG_SHA:-}"
 SONIC_SHA="${SONIC_SHA:-}"
@@ -34,7 +38,7 @@ clone_pinned() {
     local resolved
     resolved="$(git -C "$dir" rev-parse HEAD)"
     echo "== $name HEAD is $resolved"
-    echo "   pin it: export ${name}_SHA=$resolved and re-run, or edit this script"
+    echo "   pin it in .github/deps.env and re-run"
   fi
 }
 

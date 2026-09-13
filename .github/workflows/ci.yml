@@ -5,14 +5,9 @@ on:
     branches: [main]
   pull_request:
 
-# Native deps are pinned for reproducibility. scripts/fetch-native-deps.sh
-# tracks the default branch when these are empty; keep the SHAs in sync with
-# a known-good local checkout when bumping.
-env:
-  PIPER1_GPL_SHA: 404aefedbd74baa0bd43e451bc407a2b3aace0f5
-  ESPEAK_NG_SHA: 699e79690f23e2558d990a3a78b0050745b96932
-  SONIC_SHA: b93885dcb70aae50c6f76b0fe4e0868f029a077e
-  NDK_VERSION: 27.0.12077973
+# Native dep pins live in .github/deps.env (single source of truth, shared
+# with scripts/fetch-native-deps.sh). Each job loads them into the
+# environment as its first step.
 
 jobs:
   unit-tests:
@@ -20,6 +15,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Load pinned dependency revisions
+        run: grep -v '^#' .github/deps.env | grep -v '^$' >> "$GITHUB_ENV"
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -36,6 +33,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Load pinned dependency revisions
+        run: grep -v '^#' .github/deps.env | grep -v '^$' >> "$GITHUB_ENV"
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -62,6 +61,8 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+      - name: Load pinned dependency revisions
+        run: grep -v '^#' .github/deps.env | grep -v '^$' >> "$GITHUB_ENV"
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
