@@ -45,6 +45,14 @@ The suite downloads the `en_US-lessac-medium` fp16 voice (~32 MB) from
   `onTrimMemory(15)` (critical) releases the handle and the next synthesis
   rebuilds it lazily; `onTrimMemory(10)` (low) recreates immediately;
   unknown levels are ignored.
+- `PiperPlayerTest`: stop-when-idle safety, per-sentence marker emission
+  (first == 0, monotonic), stop-during-startup recovery (regression test
+  for the 2adec86 crash), and `synthesizeToFile` WAV validity.
+- `PiperEngineBehaviorTest`: `cancel()` stops a 30-sentence synthesis
+  between sentences; `onAlignment` emits phoneme groups with positive
+  sample counts and monotonic cumulative offsets; a missing model file
+  throws `PiperException`; `close()` is idempotent; the public
+  `recreateSynthesizer()` leaves the engine usable.
 
 ## App-side wiring (piper-app-android)
 
