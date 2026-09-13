@@ -1,6 +1,7 @@
 package dev.ihorshevchuk.piper.engine
 
 import dev.ihorshevchuk.piper.utils.MemoryInfo
+import dev.ihorshevchuk.piper.utils.MemoryPressurePolicy
 import dev.ihorshevchuk.piper.utils.PhonemeGroup
 import dev.ihorshevchuk.piper.utils.SpeechMarker
 import dev.ihorshevchuk.piper.utils.SynthesisPlanner
@@ -59,7 +60,26 @@ class PiperEngine(
     /** Sample rate (Hz) of the most recently synthesized chunk. Updated per chunk. */
     val currentSampleRate = AtomicInteger(22050)
 
-    private val handle: Long
+    /**
+     * Optional memory threshold in bytes, mirroring Piper.memoryThresholdBytes
+     * (piper-objc). When set, the native synthesizer is recreated before any
+     * sentence that would start while [getMemoryUsage] exceeds it.
+     */
+    @Volatile
+    var memoryThresholdBytes: Long? = null
+
+    /**
+     * How many times the native synthesizer has been (re)created since init.
+     * Test hook: lets device tests observe threshold/trim recreations.
+     */
+    @Volatile
+    internal var recreateCount: Int = 0
+
+    @Volatile
+    private var handle: Long = 0L
+
+    /** Resolved once; reused when the synthesizer is recreated. */
+    private val resolvedEspeakPath: String? = resolveEspeakDataPath(options, appFilesDir)
 
     /**
      * Sentence orchestration (port of Piper.doSynthesize) running on the
@@ -73,19 +93,7 @@ class PiperEngine(
         if (!modelFile.isFile) {
             throw PiperException("Voice model not found: ${options.modelPath}")
         }
-        val espeakPath = resolveEspeakDataPath(options, appFilesDir)
-        handle = runNative("piper_create_with_options") {
-            nativeCreate(
-                options.modelPath,
-                options.configPath,
-                espeakPath,
-                options.dataDir,
-                options.g2pwModelDir
-            )
-        }
-        if (handle == 0L) {
-            throw PiperException("piper_create_with_options failed for ${options.modelPath}")
-        }
+        runNative("piper_create_with_options") { createLocked() }
         cachedNativeVersion = runNative("piper_version") { nativeVersion() }
     }
 
@@ -114,7 +122,9 @@ class PiperEngine(
         cancelled.set(false)
         orchestrator.synthesize(
             planned = SynthesisPlanner.plan(text),
-            resolveOptions = { opts },
+            // Per-sentence memory check (port of the doSynthesize loop in
+            // piper-objc): runs before native.start for every sentence.
+            resolveOptions = { ensureSynthesizer(); opts },
             isCancelled = { cancelled.get() },
             callbacks = SynthesisOrchestrator.Callbacks(
                 onSamples = onSamples,
@@ -146,7 +156,7 @@ class PiperEngine(
         val optionsBySentence = resolved.associate { it.sentence to it.options }
         orchestrator.synthesize(
             planned = resolved.map { it.sentence },
-            resolveOptions = { optionsBySentence.getValue(it) },
+            resolveOptions = { ensureSynthesizer(); optionsBySentence.getValue(it) },
             isCancelled = { cancelled.get() },
             callbacks = SynthesisOrchestrator.Callbacks(
                 onSamples = onSamples,
@@ -202,7 +212,10 @@ class PiperEngine(
 
     /** Reads the voice's default synthesis options from the native layer. */
     fun defaultSynthesizeOptions(): PiperSynthesizeOptions {
-        val a = runNative("piper_default_synthesize_options") { nativeDefaultOptions(handle) }
+        val a = runNative("piper_default_synthesize_options") {
+            ensureLocked(checkThreshold = false)
+            nativeDefaultOptions(handle)
+        }
         require(a.size >= 4) { "nativeDefaultOptions returned ${a.size} values, expected 4" }
         return PiperSynthesizeOptions(
             speakerId = a[0].toInt(),
@@ -218,6 +231,98 @@ class PiperEngine(
     }
 
     /**
+     * Forwards an Android memory-pressure signal to the engine. The host
+     * (e.g. the TTS service) should call this from
+     * `ComponentCallbacks2.onTrimMemory` with the raw trim level. Critical
+     * pressure releases the native synthesizer (it is rebuilt lazily on next
+     * use); low/moderate running pressure recreates it immediately. This
+     * never blocks the caller: the work is queued on the engine thread behind
+     * any in-flight synthesis, mirroring the async DispatchSourceMemoryPressure
+     * handler in Piper (piper-objc).
+     */
+    fun onTrimMemory(level: Int) {
+        val action = MemoryPressurePolicy.actionForTrimLevel(level)
+        if (action == MemoryPressurePolicy.Action.NONE || closedFlag.get()) return
+        try {
+            executor.submit {
+                if (closedFlag.get()) return@submit
+                when (action) {
+                    MemoryPressurePolicy.Action.RECREATE -> {
+                        destroyLocked()
+                        createLocked()
+                        recreateCount++
+                    }
+                    MemoryPressurePolicy.Action.RELEASE -> destroyLocked()
+                    MemoryPressurePolicy.Action.NONE -> Unit
+                }
+            }
+        } catch (_: java.util.concurrent.RejectedExecutionException) {
+            // Engine is shut down; nothing to release.
+        }
+    }
+
+    /**
+     * Destroys and immediately rebuilds the native synthesizer, blocking the
+     * caller until the engine thread finishes. Port of Piper.recreateSynthesizer()
+     * (piper-objc).
+     */
+    fun recreateSynthesizer() {
+        runNative("piper_recreate_synthesizer") {
+            destroyLocked()
+            createLocked()
+            recreateCount++
+        }
+    }
+
+    /**
+     * Ensures a live native synthesizer, marshalled onto the engine thread.
+     * With the default [checkThreshold] = true this is the per-sentence
+     * memory check from Piper.doSynthesize (piper-objc): when
+     * [memoryThresholdBytes] is set and exceeded, the synthesizer is
+     * recreated before the sentence starts. It also lazily (re)creates the
+     * handle after a critical-pressure release.
+     */
+    private fun ensureSynthesizer(checkThreshold: Boolean = true) {
+        runNative("piper_ensure_synthesizer") { ensureLocked(checkThreshold) }
+    }
+
+    /**
+     * Engine-thread only. Recreates the synthesizer when [checkThreshold]
+     * and the threshold is exceeded; (re)creates it whenever there is no
+     * live handle.
+     */
+    private fun ensureLocked(checkThreshold: Boolean) {
+        val overThreshold = checkThreshold &&
+            MemoryPressurePolicy.shouldRecreate(MemoryInfo.getMemoryUsage(), memoryThresholdBytes)
+        if (handle != 0L && !overThreshold) return
+        destroyLocked()
+        createLocked()
+        recreateCount++
+    }
+
+    /** Engine-thread only. */
+    private fun destroyLocked() {
+        if (handle != 0L) {
+            nativeDestroy(handle)
+            handle = 0L
+        }
+    }
+
+    /** Engine-thread only. Throws [PiperException] when creation fails. */
+    private fun createLocked() {
+        handle = nativeCreate(
+            options.modelPath,
+            options.configPath,
+            resolvedEspeakPath,
+            options.dataDir,
+            options.g2pwModelDir
+        )
+        if (handle == 0L) {
+            throw PiperException("piper_create_with_options failed for ${options.modelPath}")
+        }
+    }
+
+    /**
      * Destroys the native synthesizer. Idempotent. Queued behind any in-flight
      * native call on the engine thread, so it never races synthesis.
      */
@@ -225,7 +330,7 @@ class PiperEngine(
         if (!closedFlag.compareAndSet(false, true)) return
         cancelled.set(true)
         try {
-            executor.submit { nativeDestroy(handle) }.get(30, TimeUnit.SECONDS)
+            executor.submit { destroyLocked() }.get(30, TimeUnit.SECONDS)
         } catch (_: Exception) {
             // Best effort: the process is tearing the engine down anyway.
         }
@@ -241,6 +346,9 @@ class PiperEngine(
     private inner class JniSynth : NativeSynth {
         override fun start(sentence: String, options: PiperSynthesizeOptions): Int {
             val rc = runNative("piper_synthesize_start") {
+                // Lazy create only (no threshold check): the per-sentence
+                // threshold check already ran in resolveOptions above.
+                ensureLocked(checkThreshold = false)
                 nativeSynthesizeStart(
                     handle, sentence,
                     options.speakerId, options.lengthScale,
@@ -257,6 +365,9 @@ class PiperEngine(
 
         override fun next(): AudioChunk? =
             runNative("piper_synthesize_next") {
+                // A critical-pressure release can land between chunks; the
+                // lazy create here keeps the utterance going after a reload.
+                ensureLocked(checkThreshold = false)
                 // null == PIPER_DONE (or a mid-sentence error: partial audio is kept)
                 val samples = nativeSynthesizeNext(handle) ?: return@runNative null
                 AudioChunk(

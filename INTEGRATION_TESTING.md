@@ -38,6 +38,28 @@ The suite downloads the `en_US-lessac-medium` fp16 voice (~32 MB) from
 - SSML synthesis honors per-fragment prosody rates and emits one cumulative
   sentence marker per fragment (second offset > first, first == 0).
 - `getMemoryUsage()` reads `/proc/self/status` on device.
+- Memory-pressure handling (port of `Piper.memoryThresholdBytes` +
+  `DispatchSourceMemoryPressure` in piper-objc):
+  `PiperEngineMemoryPressureTest` sets `memoryThresholdBytes = 1` and
+  asserts the synthesizer is recreated transparently mid-synthesis;
+  `onTrimMemory(15)` (critical) releases the handle and the next synthesis
+  rebuilds it lazily; `onTrimMemory(10)` (low) recreates immediately;
+  unknown levels are ignored.
+
+## App-side wiring (piper-app-android)
+
+The library exposes the pressure entry point; the app forwards the OS
+signal. In the TTS service:
+
+```kotlin
+override fun onTrimMemory(level: Int) {
+    super.onTrimMemory(level)
+    engine.onTrimMemory(level)
+}
+```
+
+`onTrimMemory` never blocks the caller: the release/recreate is queued on
+the engine thread behind any in-flight synthesis.
 
 ## Ear validation checklist (do after green)
 
