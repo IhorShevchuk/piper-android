@@ -23,8 +23,8 @@ adb push ../piper-app-android/app/src/main/assets/espeak-ng-data /data/local/tmp
 ## Run the integration tests
 
 ```bash
-./gradlew :piper-engine:connectedAndroidTest \
-  -Pandroid.testInstrumentationRunnerArguments.espeakDataPath=/data/local/tmp/espeak-ng-data
+./gradlew :piper-engine:connectedAndroidTest
+# -PespeakDataPath=/other/path overrides the default /data/local/tmp/espeak-ng-data
 ```
 
 The suite downloads the `en_US-lessac-medium` fp16 voice (~32 MB) from
@@ -69,8 +69,8 @@ test app's external files dir and stress-tests rapid play/stop/play through
 `PiperPlayer` + `AudioTrack`. It runs as part of `connectedAndroidTest`:
 
 ```bash
-./gradlew :piper-engine:connectedAndroidTest \
-  -Pandroid.testInstrumentationRunnerArguments.espeakDataPath=/data/local/tmp/espeak-ng-data
+./gradlew :piper-engine:connectedAndroidTest
+# -PespeakDataPath=/other/path overrides the default /data/local/tmp/espeak-ng-data
 adb pull /sdcard/Android/data/dev.ihorshevchuk.piper.engine.test/files/ear-validation .
 ```
 
