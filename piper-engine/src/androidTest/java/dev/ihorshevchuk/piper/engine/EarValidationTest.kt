@@ -130,7 +130,7 @@ class EarValidationTest {
             },
             "ear-04-long-text.wav" to {
                 enEngine.synthesizeToFile(
-                    LONG_PARAGRAPH,
+                    Texts.LONG_PARAGRAPH,
                     out("ear-04-long-text.wav")
                 )
             },
@@ -167,7 +167,7 @@ class EarValidationTest {
     fun rapidPlayStopPlayDoesNotCrashOrStall() {
         val player = PiperPlayer()
         repeat(5) {
-            player.play(enEngine, LONG_PARAGRAPH)
+            player.play(enEngine, Texts.LONG_PARAGRAPH)
             Thread.sleep(250)
             player.stop()
         }
@@ -188,7 +188,7 @@ class EarValidationTest {
     }
 
     private object Texts {
-        private const val LONG_PARAGRAPH =
+        private const val Texts.LONG_PARAGRAPH =
             "The quick brown fox jumps over the lazy dog. " +
                 "Pack my box with five dozen liquor jugs. " +
                 "How vexingly quick daft zebras jump. " +
