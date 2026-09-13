@@ -124,5 +124,7 @@ build:
 
 ## License
 
-GPL-3.0, to match piper1-gpl. Keep this port open source like the rest of the
-Piper work.
+GPL-3.0-or-later, to match piper1-gpl - see [LICENSE](LICENSE). Keep this
+port open source like the rest of the Piper work. Third-party native
+components under `third-party/` keep their own licenses (piper1-gpl and
+espeak-ng are GPL-3.0; see their sources).
