@@ -158,8 +158,21 @@ class PiperPlayer {
         val exec: ExecutorService =
             Executors.newSingleThreadExecutor { r -> Thread(r, "piper-player") }
         worker.set(exec)
-        // done() is true once stop() shuts this worker down.
-        exec.execute { block { worker.get() !== exec } }
+        // done() is true once stop() shuts this worker down. A stop() racing
+        // playback startup interrupts the engine wait inside
+        // defaultSynthesizeOptions()/synthesize() and surfaces as
+        // InterruptedException/PiperException: that is a clean, expected stop,
+        // never a crash (parity with PiperPlayer.stop on iOS, which just
+        // cancels the queue and lets the worker exit quietly).
+        exec.execute {
+            try {
+                block { worker.get() !== exec }
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+            } catch (e: Exception) {
+                if (!stopped.get()) Log.e(TAG, "playback failed", e)
+            }
+        }
     }
 
     /**
