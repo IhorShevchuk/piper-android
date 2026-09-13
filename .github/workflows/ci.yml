@@ -61,9 +61,12 @@ jobs:
 
   device-tests:
     name: Device tests (emulator)
-    # macOS runners have hardware acceleration for the x86_64 emulator;
-    # the Linux runners do not (software emulation never finishes booting).
-    runs-on: macos-latest
+    # Ubuntu runners expose /dev/kvm; the udev rule below makes it readable
+    # so the x86_64 emulator gets hardware acceleration (this is the setup
+    # recommended by reactivecircus/android-emulator-runner). Hosted macOS
+    # runners cannot do this: they are VMs without nested-virtualization
+    # support, so HVF never initializes there.
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -84,11 +87,11 @@ jobs:
           path: |
             ${{ env.ANDROID_HOME }}/ndk
             ${{ env.ANDROID_HOME }}/system-images
-          key: android-emu-${{ env.NDK_VERSION }}-api30-arm64-${{ runner.os }}
+          key: android-emu-${{ env.NDK_VERSION }}-api30-x86_64-${{ runner.os }}
       - name: Install Android packages
         run: >
           sdkmanager "platforms;android-35" "build-tools;35.0.0"
-          "ndk;$NDK_VERSION" "system-images;android-30;google_apis;arm64-v8a"
+          "ndk;$NDK_VERSION" "system-images;android-30;google_apis;x86_64"
       - name: Fetch native deps
         run: ./scripts/fetch-native-deps.sh
       - name: Cache staged espeak-ng-data
@@ -101,12 +104,18 @@ jobs:
         if: steps.espeak-cache.outputs.cache-hit != 'true'
         run: ./scripts/stage-espeak-data.sh
       - uses: gradle/actions/setup-gradle@v4
+      - name: Enable KVM group perms
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
       - name: Run instrumented tests on emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 30
-          arch: arm64-v8a
+          arch: x86_64
           target: google_apis
+          disable-animations: true
           emulator-options: -no-snapshot -no-audio -no-boot-anim
           script: |
             adb push third-party/espeak-ng/build/espeak-ng-data /data/local/tmp/espeak-ng-data
