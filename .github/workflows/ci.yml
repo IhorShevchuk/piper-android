@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 17
@@ -40,7 +40,7 @@ jobs:
           submodules: recursive
       - name: Load NDK version
         run: echo "NDK_VERSION=$(grep '^piper\.ndkVersion=' gradle.properties | cut -d= -f2)" >> "$GITHUB_ENV"
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 17

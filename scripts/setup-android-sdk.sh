@@ -1,8 +1,11 @@
 #!/bin/bash
-# One-time setup: JDK 17 + Android SDK (platform, build-tools, NDK r27, CMake)
+# One-time setup: JDK 17 + Android SDK (platform, build-tools, NDK, CMake)
 # on this Linux box so `gradlew assembleDebug` works here.
 # Re-run safely: skips steps that are already done.
 set -euo pipefail
+
+# NDK version is pinned in gradle.properties (single source of truth).
+NDK_VERSION="$(grep '^piper\.ndkVersion=' "$(dirname "$0")/../gradle.properties" | cut -d= -f2)"
 
 SDK="$HOME/workspace/android-sdk"
 CMDLINE_ZIP_URL="https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip"
@@ -36,9 +39,9 @@ sdkmanager --install \
     "platform-tools" \
     "platforms;android-35" \
     "build-tools;35.0.0" \
-    "ndk;27.0.12077973" \
+    "ndk;$NDK_VERSION" \
     "cmake;3.22.1"
 
 echo "==> Done. SDK=$SDK"
-echo "    NDK: $SDK/ndk/27.0.12077973"
+echo "    NDK: $SDK/ndk/$NDK_VERSION"
 ls "$SDK"
