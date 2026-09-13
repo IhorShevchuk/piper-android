@@ -351,10 +351,4 @@ class PiperEngine(
     private external fun nativeLastChunkAlignments(handle: Long): IntArray?
 
     private external fun nativeVersion(): String
-
-    // TEMPORARY DEVICE DIAGNOSTIC (remove with nativeDiagnoseEspeak).
-    internal fun diagnoseEspeak(espeakDataPath: String): String =
-        runNative("espeak_diagnose") { nativeDiagnoseEspeak(espeakDataPath) }
-
-    private external fun nativeDiagnoseEspeak(espeakDataPath: String): String
 }
