@@ -120,7 +120,10 @@ jobs:
           arch: x86_64
           target: google_apis
           disable-animations: true
-          emulator-options: -no-snapshot -no-audio -no-boot-anim
+          # Note: this overrides the action's default emulator-options, so
+          # -no-window and the swiftshader GPU setting must be repeated here;
+          # without -no-window the emulator's Qt UI aborts on headless Linux.
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-audio -no-boot-anim
           script: |
             adb push third-party/espeak-ng/build/espeak-ng-data /data/local/tmp/espeak-ng-data
             ./gradlew :piper-engine:connectedAndroidTest --stacktrace
