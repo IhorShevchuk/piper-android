@@ -37,6 +37,19 @@ import java.net.URL
 class EarValidationTest {
 
     companion object {
+    private const val LONG_PARAGRAPH =
+        "The quick brown fox jumps over the lazy dog. " +
+            "Pack my box with five dozen liquor jugs. " +
+            "How vexingly quick daft zebras jump. " +
+            "The five boxing wizards jump quickly. " +
+            "We promptly judged antique ivory buckles for the next prize. " +
+            "Amazingly few discotheques provide jukeboxes. " +
+            "Heavy boxes perform quick waltzes and jigs. " +
+            "Weave a circle round him thrice and close your eyes with holy dread. " +
+            "Jackdaws love my big sphinx of quartz. " +
+            "The jay, pig, fox, zebra and my wolves quack. " +
+            "Blowzy night-frumps vex'd Jack Q. " +
+            "A very bad quack might jinx zippy fowls."
         private const val TAG = "EarValidation"
         private const val MODEL_BASE =
             "https://huggingface.co/IhorShevchuk/piper1-voices-fp16-quantized/resolve/main"
@@ -130,7 +143,7 @@ class EarValidationTest {
             },
             "ear-04-long-text.wav" to {
                 enEngine.synthesizeToFile(
-                    Texts.LONG_PARAGRAPH,
+                    LONG_PARAGRAPH,
                     out("ear-04-long-text.wav")
                 )
             },
@@ -167,7 +180,7 @@ class EarValidationTest {
     fun rapidPlayStopPlayDoesNotCrashOrStall() {
         val player = PiperPlayer()
         repeat(5) {
-            player.play(enEngine, Texts.LONG_PARAGRAPH)
+            player.play(enEngine, LONG_PARAGRAPH)
             Thread.sleep(250)
             player.stop()
         }
@@ -187,19 +200,4 @@ class EarValidationTest {
         return f.absolutePath
     }
 
-    private object Texts {
-        private const val LONG_PARAGRAPH =
-            "The quick brown fox jumps over the lazy dog. " +
-                "Pack my box with five dozen liquor jugs. " +
-                "How vexingly quick daft zebras jump. " +
-                "The five boxing wizards jump quickly. " +
-                "We promptly judged antique ivory buckles for the next prize. " +
-                "Amazingly few discotheques provide jukeboxes. " +
-                "Heavy boxes perform quick waltzes and jigs. " +
-                "Weave a circle round him thrice and close your eyes with holy dread. " +
-                "Jackdaws love my big sphinx of quartz. " +
-                "The jay, pig, fox, zebra and my wolves quack. " +
-                "Blowzy night-frumps vex'd Jack Q. " +
-                "A very bad quack might jinx zippy fowls."
-    }
 }
