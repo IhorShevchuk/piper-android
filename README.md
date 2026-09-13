@@ -1,7 +1,7 @@
 # piper-android
 
-Android port of the Piper TTS iOS app (piper-objc / piper-app). Same voices,
-same engine behavior, same speed curve - Kotlin and JNI instead of Swift.
+Android port of piper-objc / piper-app. Same voices, same engine behavior,
+same speed curve - Kotlin and JNI instead of Swift.
 
 The Swift package itself cannot be reused on Android (no Swift toolchain), so
 this project re-hosts the portable layers: the libpiper C++ core and the
