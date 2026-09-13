@@ -50,6 +50,7 @@ android {
 
 dependencies {
     implementation(project(":piper-utils"))
+    androidTestImplementation(project(":piper-player"))
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
     androidTestImplementation("androidx.test:runner:1.6.2")
 }

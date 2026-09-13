@@ -41,10 +41,23 @@ The suite downloads the `en_US-lessac-medium` fp16 voice (~32 MB) from
 
 ## Ear validation checklist (do after green)
 
-Automated tests cannot hear. On the device, play and listen:
+Automated tests cannot hear. `EarValidationTest` (in
+`piper-engine/src/androidTest`) writes one WAV per checklist item into the
+test app's external files dir and stress-tests rapid play/stop/play through
+`PiperPlayer` + `AudioTrack`. It runs as part of `connectedAndroidTest`:
 
-- [ ] Plain English paragraph, normal speed - natural, no dropouts.
-- [ ] SSML with `rate="50%"` / `rate="200%"` fragments - audibly slower/faster.
-- [ ] Long paragraph (10+ sentences) - no mid-utterance dropout.
-- [ ] Rapid play/stop/play - no crash, no stuck audio.
-- [ ] PT-BR voice at 100% - sibilants intact (length_scale >= 0.45 guard).
+```bash
+./gradlew :piper-engine:connectedAndroidTest \
+  -Pandroid.testInstrumentationRunnerArguments.espeakDataPath=/data/local/tmp/espeak-ng-data
+adb pull /sdcard/Android/data/dev.ihorshevchuk.piper.engine.test/files/ear-validation .
+```
+
+The exact on-device path is logged by the test (`EarValidation` tag in
+logcat). Listen in order:
+
+- [ ] `ear-01-plain-en.wav` - plain English paragraph, natural, no dropouts.
+- [ ] `ear-02-ssml-slow.wav` - SSML `rate="50%"`, audibly slower.
+- [ ] `ear-03-ssml-fast.wav` - SSML `rate="200%"`, audibly faster.
+- [ ] `ear-04-long-text.wav` - 10+ sentences, no mid-utterance dropout.
+- [ ] `ear-05-ptbr-cadu.wav` - PT-BR Cadu at 100%, sibilants intact (the test
+      also asserts `length_scale >= 0.45` for the 100% rate).
