@@ -109,6 +109,10 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+      - name: Install emulator system libraries
+        # The emulator's qemu binary links against libpulse at load time;
+        # the ubuntu runner image does not ship it.
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libpulse0
       - name: Run instrumented tests on emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
