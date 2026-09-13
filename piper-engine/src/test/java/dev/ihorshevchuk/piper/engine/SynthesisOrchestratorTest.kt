@@ -342,4 +342,97 @@ class SynthesisOrchestratorTest {
             sentenceMarkers[1].byteOffset
         )
     }
+
+    @Test
+    fun `pause sentence emits silence without touching native`() {
+        val fake = FakeNativeSynth()
+        fake.chunks += chunk(100)
+        fake.chunks += chunk(50)
+        val orchestrator = SynthesisOrchestrator(fake)
+        val seen = mutableListOf<FloatArray>()
+        val resolved = mutableListOf<PlannedSentence>()
+
+        val total = orchestrator.synthesize(
+            listOf(
+                PlannedSentence("A.", MarkerRange(0, 2)),
+                PlannedSentence("", MarkerRange(2, 0), pauseMillis = 500L),
+                PlannedSentence("B.", MarkerRange(3, 2))
+            ),
+            resolveOptions = { sentence -> resolved += sentence; baseOptions },
+            isCancelled = { false },
+            callbacks = SynthesisOrchestrator.Callbacks(onSamples = { seen += it })
+        )
+
+        // Native synthesis and option resolution are skipped for pauses.
+        assertEquals(listOf("A.", "B."), fake.startCalls.map { it.sentence })
+        assertEquals(listOf("A.", "B."), resolved.map { it.text })
+        assertEquals(3, seen.size)
+        assertEquals(100, seen[0].size)
+        assertEquals(11025, seen[1].size) // 500 ms @ 22050 Hz
+        assertTrue("pause must be digital silence", seen[1].all { it == 0f })
+        assertEquals(50, seen[2].size)
+        assertEquals((100 + 11025 + 50) * 4L, total)
+    }
+
+    @Test
+    fun `pause renders at the last seen sample rate`() {
+        val fake = FakeNativeSynth()
+        fake.chunks += chunk(10, sampleRate = 16000)
+        val orchestrator = SynthesisOrchestrator(fake)
+        val seen = mutableListOf<FloatArray>()
+
+        orchestrator.synthesize(
+            listOf(
+                PlannedSentence("A.", MarkerRange(0, 2)),
+                PlannedSentence("", MarkerRange(2, 0), pauseMillis = 250L)
+            ),
+            resolveOptions = { baseOptions },
+            isCancelled = { false },
+            callbacks = SynthesisOrchestrator.Callbacks(onSamples = { seen += it })
+        )
+
+        assertEquals(4000, seen[1].size) // 250 ms @ 16000 Hz
+    }
+
+    @Test
+    fun `pause advances marker byte offsets`() {
+        val fake = FakeNativeSynth()
+        fake.chunks += chunk(100) // 400 bytes
+        fake.chunks += chunk(50) // 200 bytes
+        val orchestrator = SynthesisOrchestrator(fake)
+        val markers = mutableListOf<SpeechMarker>()
+
+        orchestrator.synthesize(
+            listOf(
+                PlannedSentence("Hello.", MarkerRange(0, 6)),
+                PlannedSentence("", MarkerRange(6, 0), pauseMillis = 500L), // 44100 bytes of silence
+                PlannedSentence("World.", MarkerRange(7, 6))
+            ),
+            resolveOptions = { baseOptions },
+            isCancelled = { false },
+            callbacks = SynthesisOrchestrator.Callbacks(onMarkers = { markers += it })
+        )
+
+        val sentenceMarkers = markers.filter { it.type == SpeechMarkerType.SENTENCE }
+        assertEquals(2, sentenceMarkers.size)
+        assertEquals(0, sentenceMarkers[0].byteOffset)
+        assertEquals(400 + 44100, sentenceMarkers[1].byteOffset)
+    }
+
+    @Test
+    fun `pause is skipped when cancelled`() {
+        val fake = FakeNativeSynth()
+        val orchestrator = SynthesisOrchestrator(fake)
+        val seen = mutableListOf<FloatArray>()
+
+        val total = orchestrator.synthesize(
+            listOf(PlannedSentence("", MarkerRange(0, 0), pauseMillis = 500L)),
+            resolveOptions = { baseOptions },
+            isCancelled = { true },
+            callbacks = SynthesisOrchestrator.Callbacks(onSamples = { seen += it })
+        )
+
+        assertEquals(0L, total)
+        assertTrue(seen.isEmpty())
+    }
 }

@@ -23,6 +23,13 @@ import dev.ihorshevchuk.piper.utils.SpeechMarker
  */
 internal class SynthesisOrchestrator(private val native: NativeSynth) {
 
+    /**
+     * Sample rate of the most recent audio chunk. SSML `<break>` pauses
+     * render silence at this rate; the 22050 default matches the engine's
+     * and covers a break placed before any audio.
+     */
+    private var lastSampleRate = 22050
+
     data class Callbacks(
         val onSamples: (FloatArray) -> Unit = {},
         val onAlignment: (List<PhonemeGroup>) -> Unit = {},
@@ -39,6 +46,17 @@ internal class SynthesisOrchestrator(private val native: NativeSynth) {
         var totalBytes = 0L
         for (sentence in planned) {
             if (isCancelled()) break
+            if (sentence.pauseMillis > 0) {
+                // SSML <break>: emit silence without touching the native
+                // synthesizer. Byte offsets still advance so the speech
+                // markers of surrounding sentences stay correct.
+                val samples = ((lastSampleRate * sentence.pauseMillis) / 1000)
+                    .toInt()
+                    .coerceAtLeast(1)
+                callbacks.onSamples(FloatArray(samples))
+                totalBytes += samples * 4L
+                continue
+            }
             val sentenceStartByteOffset = totalBytes
             if (native.start(sentence.text, resolveOptions(sentence)) == NativeSynth.ERR_GENERIC) {
                 continue
@@ -50,6 +68,7 @@ internal class SynthesisOrchestrator(private val native: NativeSynth) {
                 val chunk = native.next() ?: break
                 if (chunk.samples.isEmpty() && (chunk.alignments == null || chunk.alignments.isEmpty())) break
                 callbacks.onSampleRate(chunk.sampleRate)
+                lastSampleRate = chunk.sampleRate
                 if (chunk.samples.isNotEmpty()) {
                     callbacks.onSamples(chunk.samples)
                 }

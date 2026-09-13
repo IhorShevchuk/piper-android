@@ -6,15 +6,18 @@ package dev.ihorshevchuk.piper.utils
  * @param text the sentence text.
  * @param range the sentence's range in the utterance source text (UTF-16
  * units), for speech markers. For SSML this is an offset into the
- * concatenated plain text, mirroring Swift's
- * `ssmlFragment.ssmlRange.location + locationInFragment`.
+ * concatenated plain text.
  * @param rate the SSML prosody rate multiplier that produced this sentence;
  * 1.0 for plain text.
+ * @param pauseMillis silence to render instead of speech, from SSML
+ * `<break>`; 0 means synthesize [text]. Pause sentences carry empty text
+ * and no markers - they only advance the audio timeline.
  */
 data class PlannedSentence(
     val text: String,
     val range: MarkerRange,
-    val rate: Float = 1.0f
+    val rate: Float = 1.0f,
+    val pauseMillis: Long = 0L
 )
 
 /**
@@ -42,7 +45,18 @@ object SynthesisPlanner {
     fun planSsml(ssml: String): List<PlannedSentence> {
         val out = mutableListOf<PlannedSentence>()
         for (fragment in SsmlParser.parse(ssml)) {
-            out += locateSentences(fragment.text, fragment.range.first, fragment.rate)
+            if (fragment.pauseMillis > 0) {
+                // SSML <break>: a silent sentence at the break's position.
+                // The orchestrator renders it as silence so the marker byte
+                // offsets of the sentences around it stay correct.
+                out += PlannedSentence(
+                    text = "",
+                    range = MarkerRange(fragment.range.first, 0),
+                    pauseMillis = fragment.pauseMillis
+                )
+            } else {
+                out += locateSentences(fragment.text, fragment.range.first, fragment.rate)
+            }
         }
         return out
     }

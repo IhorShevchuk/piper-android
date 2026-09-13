@@ -44,7 +44,8 @@ class SynthesisPlannerTest {
         assertEquals("Slow down.", planned[0].text)
         assertEquals(0.5f, planned[0].rate, 0.0001f)
         assertEquals("Normal.", planned[1].text)
-        assertEquals(0.5f, planned[1].rate, 0.0001f)
+        // Untagged text uses the SSML default rate 1.0.
+        assertEquals(1.0f, planned[1].rate, 0.0001f)
     }
 
     @Test
@@ -65,8 +66,8 @@ class SynthesisPlannerTest {
     fun `ssml without prosody plans like plain text`() {
         val planned = SynthesisPlanner.planSsml("<speak>Hello. World.</speak>")
         assertEquals(2, planned.size)
-        // SSML root rate is the AV-legacy 0.5 normal (maps to length_scale 1.0).
-        assertTrue(planned.all { it.rate == 0.5f })
+        // SSML default rate is 1.0 (normal speed).
+        assertTrue(planned.all { it.rate == 1.0f })
         assertEquals(MarkerRange(0, 6), planned[0].range)
         assertEquals(MarkerRange(7, 6), planned[1].range)
     }
@@ -88,5 +89,27 @@ class SynthesisPlannerTest {
         assertEquals(1, planned.size)
         assertEquals("Hello world.", planned[0].text)
         assertEquals(SynthesisPlanner.RANGE_NOT_FOUND, planned[0].range)
+    }
+
+    @Test
+    fun `ssml break plans a silent sentence between text`() {
+        val planned = SynthesisPlanner.planSsml("<speak>Wait.<break time=\"500ms\"/> Go.</speak>")
+
+        assertEquals(3, planned.size)
+        assertEquals("Wait.", planned[0].text)
+        assertEquals(0L, planned[0].pauseMillis)
+        assertEquals("", planned[1].text)
+        assertEquals(500L, planned[1].pauseMillis)
+        assertEquals("Go.", planned[2].text)
+        assertEquals(0L, planned[2].pauseMillis)
+    }
+
+    @Test
+    fun `ssml pause sentence carries the break position`() {
+        val planned = SynthesisPlanner.planSsml("Hi.<break time=\"100ms\"/>Bye.")
+
+        assertEquals(3, planned.size)
+        assertEquals(MarkerRange(3, 0), planned[1].range)
+        assertEquals(100L, planned[1].pauseMillis)
     }
 }

@@ -1,45 +1,56 @@
 package dev.ihorshevchuk.piper.utils
 
+import org.xmlpull.v1.XmlPullParser
+import org.xmlpull.v1.XmlPullParserFactory
+
 /**
- * A run of plain text with a uniform speaking rate, plus its range in the
- * concatenated plain-text output.
+ * One SSML fragment: a run of plain text spoken at a uniform rate, or a
+ * pause from `<break>`.
  *
- * @param rate speaking rate from the SSML: 0.5 is normal (the
- * AVSpeechUtterance-legacy normal Swift's parser starts from), 1.0 is the
- * normal speed multiplier. Convert to a Piper lengthScale downstream via
- * SpeedCurve.lengthScaleForRate, which maps both to 1.0 exactly like Swift's
- * getOptions.
+ * @param text the fragment's plain text; empty for `<break>` pauses.
+ * @param rate the SSML prosody rate multiplier for this fragment; 1.0 is
+ * normal speed.
+ * @param range the fragment's range in the concatenated plain-text output.
+ * Break fragments carry an empty range at the break's position.
+ * @param pauseMillis silence to render for this fragment, from `<break>`;
+ * 0 for text fragments.
  */
 data class SsmlFragment(
     val text: String,
     val rate: Float,
-    val range: IntRange
+    val range: IntRange,
+    val pauseMillis: Long = 0L
 )
 
 /**
- * Faithful port of SSMLParser / SSMLNode (piper-objc).
+ * SSML parsing on top of [XmlPullParser] (xpp3), the community-standard
+ * streaming XML parser available on both JVM and Android with no Android
+ * framework dependency.
  *
- * A hand-rolled scanner (no XML dependency, JVM-pure) mirrors NSXMLParser's
- * observable behavior:
- * - <speak> and any other tag is stripped; text before/inside/after is kept.
- * - <prosody rate="..."> pushes a rate context: percent ("80%"), plain float
- *   ("1.25"), or the SSML named rates (x-slow 0.5, slow 0.75, medium 1.0,
- *   fast 1.5, x-fast 2.0). A <prosody> without a rate inherits the parent
- *   rate; an unparseable rate falls back to 0.5 (Swift parseRate default).
- * - Text outside any tag, and text with no tags at all, carries the root
- *   rate 0.5 - except when the input has no tags whatsoever, which
- *   NSXMLParser rejects: then the whole input is one fragment at 1.0.
- * - Flushing on every tag boundary: nested/unsupported tags split fragments,
- *   whitespace-only runs are dropped.
- * - XML entities (&amp; &lt; &gt; &quot; &apos;, numeric) are decoded.
- * - Comments are skipped; CDATA content is kept as text.
- * - Malformed input (unclosed/mismatched tags, unknown entities, bare &)
- *   falls back to the whole input as a single 1.0 fragment, like Swift's
- *   parser.parse() == false path.
+ * Supported subset, per the SSML spec:
+ * - `<speak>` root and any unknown element (`voice`, `say-as`, `sub`,
+ *   `emphasis`, `phoneme`, ...) are transparent containers: inner text is
+ *   kept, the tag itself ignored.
+ * - `<prosody rate="...">` pushes a rate context: percent ("80%"), float
+ *   multiplier ("1.25"), the named rates (x-slow 0.5, slow 0.75, medium 1.0,
+ *   fast 1.5, x-fast 2.0), and relative percent ("+50%"/"-50%") adjusting the
+ *   parent rate. A missing or unparseable rate inherits the parent rate;
+ *   the root default is 1.0.
+ * - `<break>`: `time` ("500ms", "2s", bare millis) wins over `strength`
+ *   (none, x-weak 150, weak 300, medium 500, strong 1000, x-strong 1500 ms -
+ *   our mapping, since the spec leaves durations to the processor). A bare
+ *   `<break/>` pauses a medium 500 ms; `strength="none"` is a no-op.
+ * - Comments and processing instructions are skipped; CDATA sections and
+ *   XML entities are decoded by the parser.
+ *
+ * Leniency (this is a TTS engine, not a validator):
+ * - Input without any markup is one 1.0-rate fragment.
+ * - Input is wrapped in a synthetic `<speak>` root, so text outside tags
+ *   and missing root elements still parse.
+ * - Malformed XML never drops user text: the raw input is returned as one
+ *   1.0-rate fragment.
  */
 object SsmlParser {
-    private val rateAttrRegex = Regex("""rate\s*=\s*["']([^"']+)["']""")
-    private val entityRegex = Regex("&(#\\d+|#[xX][0-9a-fA-F]+|amp|lt|gt|quot|apos);")
     private val namedRates = mapOf(
         "x-slow" to 0.5f,
         "slow" to 0.75f,
@@ -48,160 +59,137 @@ object SsmlParser {
         "x-fast" to 2.0f
     )
 
-    /** Root rate: AVSpeechUtterance normal, mirroring Swift's SSMLContext. */
-    private const val ROOT_RATE = 0.5f
+    /**
+     * SSML `break` strength to pause. The spec defines the strengths but
+     * leaves durations to the processor; these are ours.
+     */
+    private val breakStrengthMillis = mapOf(
+        "none" to 0L,
+        "x-weak" to 150L,
+        "weak" to 300L,
+        "medium" to 500L,
+        "strong" to 1000L,
+        "x-strong" to 1500L
+    )
 
-    private class Ctx(val name: String, val rate: Float) {
-        val text = StringBuilder()
+    private const val DEFAULT_BREAK_MILLIS = 500L
+
+    fun parse(ssml: String): List<SsmlFragment> {
+        if (ssml.isBlank()) return emptyList()
+        if (!ssml.contains('<')) {
+            return listOf(SsmlFragment(text = ssml, rate = 1.0f, range = 0 until ssml.length))
+        }
+        return try {
+            parseDocument("<speak>$ssml</speak>")
+        } catch (e: Exception) {
+            // Malformed markup: speak the raw input rather than dropping text.
+            listOf(SsmlFragment(text = ssml, rate = 1.0f, range = 0 until ssml.length))
+        }
     }
 
-    fun parse(xml: String): List<SsmlFragment> {
-        if (xml.isBlank()) return emptyList()
+    private fun parseDocument(xml: String): List<SsmlFragment> {
+        val parser = XmlPullParserFactory.newInstance().newPullParser()
+        parser.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, false)
+        parser.setInput(xml.reader())
 
         val fragments = mutableListOf<SsmlFragment>()
         val plain = StringBuilder()
-        val stack = ArrayDeque<Ctx>()
-        stack.addLast(Ctx("", ROOT_RATE))
-        var sawTag = false
-        var malformed = false
+        val rates = ArrayDeque<Float>()
+        rates.addLast(1.0f)
+        val text = StringBuilder()
 
-        fun flush() {
-            val ctx = stack.last()
-            if (ctx.text.isBlank()) {
-                ctx.text.clear()
+        fun flushText() {
+            if (text.isBlank()) {
+                text.clear()
                 return
             }
-            val text = decodeEntities(ctx.text.toString())
-            ctx.text.clear()
+            val t = text.toString()
+            text.clear()
             val start = plain.length
-            plain.append(text)
-            fragments.add(SsmlFragment(text = text, rate = ctx.rate, range = start until plain.length))
+            plain.append(t)
+            fragments.add(SsmlFragment(text = t, rate = rates.last(), range = start until plain.length))
         }
 
-        fun handleTag(raw: String) {
-            val t = raw.trim()
-            if (t.startsWith("?") || t.startsWith("!")) return // PI / DOCTYPE: strip
-            val selfClosing = t.endsWith("/")
-            val body = if (selfClosing) t.dropLast(1).trim() else t
-            if (body.startsWith("/")) {
-                flush()
-                val name = body.drop(1).substringBefore(' ').trim().lowercase()
-                if (stack.size <= 1 || stack.last().name != name) {
-                    malformed = true
-                    return
+        var event = parser.eventType
+        while (event != XmlPullParser.END_DOCUMENT) {
+            when (event) {
+                XmlPullParser.TEXT -> {
+                    val t = parser.text
+                    if (t.isNotBlank()) text.append(t)
                 }
-                stack.removeLast()
-            } else {
-                val name = body.substringBefore(' ').trim().lowercase()
-                flush()
-                if (selfClosing) return // e.g. <break/>: boundary only
-                if (name.isEmpty()) {
-                    malformed = true
-                    return
-                }
-                val rate = if (name == "prosody") {
-                    val attr = rateAttrRegex.find(raw)?.groupValues?.get(1)
-                    if (attr == null) stack.last().rate else parseRate(attr)
-                } else {
-                    stack.last().rate
-                }
-                stack.addLast(Ctx(name, rate))
-            }
-        }
-
-        var i = 0
-        while (i < xml.length && !malformed) {
-            when {
-                xml.startsWith("<!--", i) -> {
-                    sawTag = true
-                    val end = xml.indexOf("-->", i + 4)
-                    if (end < 0) malformed = true else i = end + 3
-                }
-                xml.startsWith("<![CDATA[", i) -> {
-                    sawTag = true
-                    val end = xml.indexOf("]]>", i + 9)
-                    if (end < 0) {
-                        malformed = true
-                    } else {
-                        stack.last().text.append(xml.substring(i + 9, end))
-                        i = end + 3
+                XmlPullParser.START_TAG -> {
+                    flushText()
+                    val name = parser.name.lowercase()
+                    if (name == "break") {
+                        val millis = breakMillis(parser)
+                        if (millis > 0) {
+                            val pos = plain.length
+                            fragments.add(
+                                SsmlFragment(
+                                    text = "",
+                                    rate = rates.last(),
+                                    range = pos until pos,
+                                    pauseMillis = millis
+                                )
+                            )
+                        }
                     }
+                    rates.addLast(
+                        if (name == "prosody") {
+                            parseRate(parser.getAttributeValue(null, "rate"), rates.last())
+                        } else {
+                            rates.last()
+                        }
+                    )
                 }
-                xml[i] == '<' -> {
-                    sawTag = true
-                    val end = xml.indexOf('>', i + 1)
-                    if (end < 0) {
-                        malformed = true
-                    } else {
-                        handleTag(xml.substring(i + 1, end))
-                        i = end + 1
-                    }
-                }
-                else -> {
-                    val next = xml.indexOf('<', i)
-                    val run = if (next < 0) xml.substring(i) else xml.substring(i, next)
-                    if (hasBadEntity(run)) {
-                        malformed = true
-                    } else {
-                        stack.last().text.append(run)
-                        i = if (next < 0) xml.length else next
-                    }
+                XmlPullParser.END_TAG -> {
+                    flushText()
+                    if (rates.size > 1) rates.removeLast()
                 }
             }
+            event = parser.next()
         }
-
-        if (!malformed) flush()
-        // Swift: parser.parse() == false, or no tags at all (NSXMLParser
-        // rejects tag-free input) -> whole input as one 1.0 node.
-        if (malformed || stack.size != 1 || !sawTag) {
-            return listOf(SsmlFragment(text = xml, rate = 1.0f, range = 0 until xml.length))
-        }
+        flushText()
         return fragments
     }
 
     /**
-     * Port of Swift's parseRate: percent, float multiplier, named rates;
-     * anything unparseable -> 0.5 (Swift's default, the AV normal).
+     * Parses an SSML prosody rate: named rate, percent, float multiplier, or
+     * relative percent ("+50%"/"-50%") adjusting [parentRate]. Anything
+     * missing or unparseable inherits [parentRate] (the spec: invalid values
+     * are ignored).
      */
-    private fun parseRate(raw: String): Float {
+    private fun parseRate(raw: String?, parentRate: Float): Float {
+        if (raw == null) return parentRate
         val s = raw.trim().lowercase()
         namedRates[s]?.let { return it }
+        val relative = s.startsWith("+") || s.startsWith("-")
         if (s.endsWith("%")) {
-            return s.dropLast(1).trim().toFloatOrNull()?.div(100f) ?: 0.5f
-        }
-        return s.toFloatOrNull() ?: 0.5f
-    }
-
-    private fun decodeEntities(text: String): String {
-        // Unknown entities were already rejected by hasBadEntity; this only decodes.
-        return entityRegex.replace(text) { m ->
-            when (val e = m.groupValues[1]) {
-                "amp" -> "&"
-                "lt" -> "<"
-                "gt" -> ">"
-                "quot" -> "\""
-                "apos" -> "'"
-                else -> { // numeric: #123 or #x1F
-                    val digits = e.drop(1)
-                    val code = if (digits.startsWith("x", ignoreCase = true)) {
-                        digits.drop(1).toIntOrNull(16)
-                    } else {
-                        digits.toIntOrNull()
-                    }
-                    if (code != null && code > 0) String(Character.toChars(code)) else m.value
-                }
+            val pct = s.dropLast(1).trim().toFloatOrNull() ?: return parentRate
+            return if (relative) {
+                (parentRate * (1f + pct / 100f)).coerceAtLeast(0f)
+            } else {
+                (pct / 100f).coerceAtLeast(0f)
             }
         }
+        return s.toFloatOrNull()?.coerceAtLeast(0f) ?: parentRate
     }
 
-    /** Any & that does not start a known entity (NSXMLParser would fail). */
-    private fun hasBadEntity(run: String): Boolean {
-        var idx = run.indexOf('&')
-        while (idx >= 0) {
-            val m = entityRegex.find(run, idx)
-            if (m == null || m.range.first != idx) return true
-            idx = run.indexOf('&', idx + 1)
+    /** `time` wins over `strength`; a bare `<break/>` is a medium pause. */
+    private fun breakMillis(parser: XmlPullParser): Long {
+        parser.getAttributeValue(null, "time")?.let { return parseTimeToMillis(it) }
+        parser.getAttributeValue(null, "strength")?.let {
+            return breakStrengthMillis[it.trim().lowercase()] ?: DEFAULT_BREAK_MILLIS
         }
-        return false
+        return DEFAULT_BREAK_MILLIS
+    }
+
+    private fun parseTimeToMillis(raw: String): Long {
+        val s = raw.trim().lowercase()
+        return when {
+            s.endsWith("ms") -> s.dropLast(2).trim().toLongOrNull() ?: 0L
+            s.endsWith("s") -> s.dropLast(1).trim().toDoubleOrNull()?.times(1000)?.toLong() ?: 0L
+            else -> s.toLongOrNull() ?: 0L
+        }.coerceAtLeast(0L)
     }
 }
