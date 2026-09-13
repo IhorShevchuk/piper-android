@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Native deps are pinned for reproducibility. scripts/fetch-native-deps.sh
+# tracks the default branch when these are empty; keep the SHAs in sync with
+# a known-good local checkout when bumping.
+env:
+  PIPER1_GPL_SHA: 404aefedbd74baa0bd43e451bc407a2b3aace0f5
+  ESPEAK_NG_SHA: 699e79690f23e2558d990a3a78b0050745b96932
+  SONIC_SHA: b93885dcb70aae50c6f76b0fe4e0868f029a077e
+  NDK_VERSION: 27.0.12077973
+
+jobs:
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v3
+      - name: Install Android packages
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Run JVM unit tests
+        run: ./gradlew test --stacktrace
+
+  native-build:
+    name: Native build (3 ABIs)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v3
+      - name: Cache NDK
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.ANDROID_HOME }}/ndk
+          key: ndk-${{ env.NDK_VERSION }}
+      - name: Install Android packages
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;$NDK_VERSION"
+      - name: Fetch native deps
+        run: ./scripts/fetch-native-deps.sh
+      - uses: gradle/actions/setup-gradle@v4
+      # Verifies the piper1-gpl patch applies at configure time and the C++
+      # compiles for arm64-v8a, armeabi-v7a and x86_64.
+      - name: Build native libs for all ABIs
+        run: ./gradlew :piper-engine:assembleDebug --stacktrace
+
+  device-tests:
+    name: Device tests (emulator)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v3
+      - name: Cache NDK and system image
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.ANDROID_HOME }}/ndk
+            ${{ env.ANDROID_HOME }}/system-images
+          key: android-emu-${{ env.NDK_VERSION }}-api30
+      - name: Install Android packages
+        run: >
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+          "ndk;$NDK_VERSION" "system-images;android-30;google_apis;x86_64"
+      - name: Fetch native deps
+        run: ./scripts/fetch-native-deps.sh
+      - name: Cache staged espeak-ng-data
+        id: espeak-cache
+        uses: actions/cache@v4
+        with:
+          path: third-party/espeak-ng/build/espeak-ng-data
+          key: espeak-ng-data-${{ env.ESPEAK_NG_SHA }}
+      - name: Stage espeak-ng-data
+        if: steps.espeak-cache.outputs.cache-hit != 'true'
+        run: ./scripts/stage-espeak-data.sh
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Run instrumented tests on emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          arch: x86_64
+          target: google_apis
+          emulator-options: -no-snapshot -no-audio -no-boot-anim
+          script: |
+            adb push third-party/espeak-ng/build/espeak-ng-data /data/local/tmp/espeak-ng-data
+            ./gradlew :piper-engine:connectedAndroidTest --stacktrace
