@@ -16,8 +16,8 @@ are byte-identical across platforms.
 | Android module | iOS twin | Contents |
 |---|---|---|
 | `:piper-engine` | piper-objc (Piper.swift, PiperCreateOptions.swift) | `PiperEngine`: JNI bridge over libpiper; serialized synthesis, sentence splitting, skip-failed-sentence resilience, WAV file output |
-| `:piper-utils` | piper-utils (Swift) | Pure-JVM Kotlin: `SentenceSplitter`, `SsmlParser`, `AlignmentParser` |
-| `:piper-player` | piper-player (Swift) | `SpeedCurve` (exact 17-point table + sibilant clamp), `PiperPlayer` (AudioTrack streaming) |
+| `:piper-utils` | piper-utils (Swift) | Pure-JVM Kotlin: `SentenceSplitter`, `SsmlParser`, `AlignmentParser`, `SpeedCurve` (exact 17-point table + sibilant clamp) |
+| `:piper-player` | piper-player (Swift) | `PiperPlayer` (AudioTrack streaming) |
 
 The sample app lives in the sibling repo **piper-app-android**
 (iOS twin: piper-app) and consumes this library via a Gradle composite build.
