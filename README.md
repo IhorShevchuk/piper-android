@@ -2,30 +2,41 @@
 
 [![CI](https://github.com/IhorShevchuk/piper-kotlin/actions/workflows/ci.yml/badge.svg)](https://github.com/IhorShevchuk/piper-kotlin/actions/workflows/ci.yml)
 
-Android port of piper-objc / piper-app. Same voices, same engine behavior,
-same speed curve - Kotlin and JNI instead of Swift.
-
-The Swift package itself cannot be reused on Android (no Swift toolchain), so
-this project re-hosts the portable layers: the libpiper C++ core and the
-espeak-ng phonemizer compile for Android via the NDK, and the Swift API
-surface is mirrored 1:1 in Kotlin. Voice model files (`.onnx` + `.onnx.json`)
-are byte-identical across platforms.
+Offline neural text-to-speech for Android. `piper-kotlin` bundles the Piper
+TTS engine (the `piper1-gpl` C++ core), the espeak-ng phonemizer, and ONNX
+Runtime behind a Kotlin API: create an engine for a voice model, synthesize
+text to PCM audio, and play it back with `PiperPlayer`. Voice files are the
+standard Piper `.onnx` / `.onnx.json` pairs, used unchanged.
 
 ## Modules
 
-| Android module | iOS twin | Contents |
-|---|---|---|
-| `:piper-engine` | piper-objc (Piper.swift, PiperCreateOptions.swift) | `PiperEngine`: JNI bridge over libpiper; serialized synthesis, sentence splitting, skip-failed-sentence resilience, WAV file output |
-| `:piper-utils` | piper-utils (Swift) | Pure-JVM Kotlin: `SentenceSplitter`, `SsmlParser`, `AlignmentParser`, `SpeedCurve` (exact 17-point table + sibilant clamp) |
-| `:piper-player` | piper-player (Swift) | `PiperPlayer` (AudioTrack streaming) |
+| Module | Contents |
+|---|---|
+| `:piper-engine` | `PiperEngine`: JNI bridge over libpiper; serialized synthesis, sentence splitting, skip-failed-sentence resilience, WAV file output |
+| `:piper-utils` | Pure-JVM Kotlin: `SentenceSplitter`, `SsmlParser`, `AlignmentParser`, `SpeedCurve` (17-point rate table with sibilant-safe clamp) |
+| `:piper-player` | `PiperPlayer`: `AudioTrack` streaming playback over `PiperEngine` |
 
-The sample app lives in the sibling repo **piper-app-android**
-(iOS twin: piper-app) and consumes this library via a Gradle composite build.
+## Usage
+
+```kotlin
+val engine = PiperEngine(
+    PiperCreateOptions(modelPath = "/path/to/en_US-lessac-medium.onnx"),
+    appFilesDir = context.filesDir,
+)
+engine.use {
+    // Streams FloatArray PCM chunks (22050 Hz) as they are synthesized.
+    it.synthesize("Hello, world.", onSamples = { pcm -> player.write(pcm) })
+}
+```
+
+`configPath = null` means "modelPath + .json". `synthesizeToFile()` writes a
+WAV directly; `synthesizeSsml()` applies per-fragment prosody rates.
 
 ## Prerequisites
 
 - JDK 17
-- Android SDK with platform 35, build-tools 35.0.0, NDK 27.0.12077973, CMake 3.22.1
+- Android SDK with platform 35, build-tools 35.0.0, NDK (version pinned in
+  `gradle.properties` as `piper.ndkVersion`), CMake 3.22.1
 
 ```bash
 scripts/setup-android-sdk.sh   # installs the SDK into ~/workspace/android-sdk
@@ -45,15 +56,15 @@ scripts/fetch-native-deps.sh   # inits submodules + stages onnxruntime into thir
 ./gradlew :piper-engine:assembleDebug   # builds the native + Kotlin library
 ```
 
-Then in the sibling piper-app-android repo:
-
-```bash
-scripts/download-voice.sh en_US-lessac-medium   # voice -> app/src/main/assets/voices/
-./gradlew assembleDebug        # APK at app/build/outputs/apk/debug/app-debug.apk
-```
-
 (The Gradle wrapper jar is not vendored; run `gradle wrapper` once with a
 local Gradle 8.10.2, or let your IDE generate it.)
+
+## Testing
+
+```bash
+./gradlew test                                        # JVM unit tests
+./gradlew :piper-engine:connectedAndroidTest          # on-device tests (needs a connected device)
+```
 
 ## How the JNI maps to the C API
 
@@ -72,68 +83,43 @@ the plain `Java_dev_ihorshevchuk_piper_engine_PiperEngine_nativeXxx` names:
 
 Every chunk's samples, phonemes and alignments are copied out of the
 `piper_audio_chunk` immediately, so the JNI never depends on piper's buffer
-ownership rules. `PIPER_ERR_GENERIC` from `nativeSynthesizeStart` skips that
-sentence and continues (the Sawyer long-utterance fix, ported from Swift).
+ownership rules. A failed sentence (`PIPER_ERR_GENERIC` from
+`nativeSynthesizeStart`) is skipped and synthesis continues with the next one.
 
 ## Threading model
 
 libpiper is not thread-safe. All native calls are serialized through a
-dedicated single-thread executor inside `PiperEngine` (the equivalent of the
-iOS serial OperationQueue). `synthesize()` blocks the calling thread;
-`PiperPlayer` calls it from its own worker thread. `cancel()` stops synthesis
-between sentences; `close()` queues `nativeDestroy` behind any in-flight call.
+dedicated single-thread executor inside `PiperEngine`. `synthesize()` blocks
+the calling thread; `PiperPlayer` calls it from its own worker thread.
+`cancel()` stops synthesis between sentences; `close()` queues
+`nativeDestroy` behind any in-flight call.
 
 ## Speed curve
 
-`SpeedCurve` ports the exact 17-point table and the AV-vs-multiplier
-`getOptions` distinction from Piper.swift. Two behaviors are load-bearing:
+`SpeedCurve` maps UI speed percentages to engine `length_scale` through a
+fixed 17-point table. Two behaviors are load-bearing:
 
-- Rates above 1.0 are **clamped, never extrapolated** (the 1.0.10 bug read
-  2.0x as 7.88x).
+- Rates above 1.0 are **clamped, never extrapolated**.
 - The curve tops out at **2.2x**, so the fastest `length_scale` is ~0.4545,
-  which stays above the 0.45 floor where PT-BR voices start dropping
-  sibilants (Ricksparta / Ricardo, Sep 2026). A plain 1.0x multiplier maps to
-  length 1.0 (normal), not to the 2.2x AV-fastest point.
-
-`SpeedCurveTest` mirrors the Swift test suite on the JVM.
+  which stays above the 0.45 floor where voices start dropping sibilants.
+  1.0x maps to length 1.0 (normal speech).
 
 ## espeak-ng-data packaging (~25 MB)
 
 The native layer needs the compiled espeak-ng data directory at runtime.
-`PiperEngine` resolves it as: explicit `espeakDataPath` -> `<files>/espeak-ng-data`
--> `<dataDir>/espeak-ng-data` -> native auto-discovery. The sample app (in
-piper-app-android) copies `app/src/main/assets/espeak-ng-data/` to filesDir on
-first launch. Stage it there by compiling the vendored espeak-ng
-(`third-party/espeak-ng`) once, or reuse the data directory already bundled
-with the iOS app.
+`PiperEngine` resolves it as: explicit `espeakDataPath` ->
+`<files>/espeak-ng-data` -> `<dataDir>/espeak-ng-data` -> native
+auto-discovery. `scripts/stage-espeak-data.sh` builds the vendored espeak-ng
+for the host and stages the data directory under
+`third-party/espeak-ng/build/espeak-ng-data`.
 
 ## Voice files
 
-Same `.onnx` / `.onnx.json` files as iOS, no conversion. `configPath = null`
-means "modelPath + .json", matching the Swift behavior.
-
-## First-build iteration
-
-The scaffold is complete and compiling-intent, but three foreign-source
-details must be reconciled against the vendored trees on the first real
-build:
-
-1. **espeak-ng CMake source list** (`piper-engine/src/main/cpp/CMakeLists.txt`):
-   the exclusion regex keeps CLI/test mains out of `libpiper_jni.so`. File
-   names drift between espeak-ng releases - duplicate `main()` at link time
-   means a missed exclusion; missing symbols mean over-exclusion.
-2. **`config.h`** (`piper-engine/src/main/cpp/cmake-config/config.h.in`):
-   minimal hand-written set of `HAVE_*` defines. If the compiler asks for
-   more, add them here.
-3. **piper.h field names** (`piper_jni.cpp`, top-of-file comment): the assumed
-   `piper_create_options` / `piper_synthesize_options` / `piper_audio_chunk`
-   layouts must match `third-party/piper1-gpl/libpiper/include/piper.h`.
-4. **onnxruntime AAR layout** (`scripts/fetch-native-deps.sh`): the script
-   fails loudly if `libonnxruntime.so` is not where expected under `jni/<abi>/`.
+Standard Piper `.onnx` / `.onnx.json` pairs, no conversion.
+`configPath = null` means "modelPath + .json".
 
 ## License
 
-GPL-3.0-or-later, to match piper1-gpl - see [LICENSE](LICENSE). Keep this
-port open source like the rest of the Piper work. Third-party native
-components under `third-party/` keep their own licenses (piper1-gpl and
-espeak-ng are GPL-3.0; see their sources).
+GPL-3.0-or-later - see [LICENSE](LICENSE). Third-party native components
+under `third-party/` keep their own licenses (piper1-gpl and espeak-ng are
+GPL-3.0; see their sources).
