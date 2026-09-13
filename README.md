@@ -33,8 +33,15 @@ scripts/setup-android-sdk.sh   # installs the SDK into ~/workspace/android-sdk
 
 ## Build
 
+piper1-gpl, espeak-ng and sonic are git submodules pinned at tested SHAs
+(see `.gitmodules`); onnxruntime is downloaded as a binary (no upstream
+submodule exists for the Android AAR + headers).
+
 ```bash
-scripts/fetch-native-deps.sh   # vendors piper1-gpl, espeak-ng, onnxruntime into third-party/
+git clone --recurse-submodules https://github.com/IhorShevchuk/piper-kotlin.git
+# ...or, in an existing clone:
+git submodule update --init --recursive
+scripts/fetch-native-deps.sh   # inits submodules + stages onnxruntime into third-party/
 ./gradlew :piper-engine:assembleDebug   # builds the native + Kotlin library
 ```
 
