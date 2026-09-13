@@ -1,4 +1,6 @@
-# piper-android
+# piper-kotlin
+
+[![CI](https://github.com/IhorShevchuk/piper-kotlin/actions/workflows/ci.yml/badge.svg)](https://github.com/IhorShevchuk/piper-kotlin/actions/workflows/ci.yml)
 
 Android port of piper-objc / piper-app. Same voices, same engine behavior,
 same speed curve - Kotlin and JNI instead of Swift.
@@ -14,8 +16,8 @@ are byte-identical across platforms.
 | Android module | iOS twin | Contents |
 |---|---|---|
 | `:piper-engine` | piper-objc (Piper.swift, PiperCreateOptions.swift) | `PiperEngine`: JNI bridge over libpiper; serialized synthesis, sentence splitting, skip-failed-sentence resilience, WAV file output |
-| `:piper-utils` | piper-utils (Swift) | Pure-JVM Kotlin: `SentenceSplitter`, `SsmlParser`, `AlignmentParser` |
-| `:piper-player` | piper-player (Swift) | `SpeedCurve` (exact 17-point table + sibilant clamp), `PiperPlayer` (AudioTrack streaming) |
+| `:piper-utils` | piper-utils (Swift) | Pure-JVM Kotlin: `SentenceSplitter`, `SsmlParser`, `AlignmentParser`, `SpeedCurve` (exact 17-point table + sibilant clamp) |
+| `:piper-player` | piper-player (Swift) | `PiperPlayer` (AudioTrack streaming) |
 
 The sample app lives in the sibling repo **piper-app-android**
 (iOS twin: piper-app) and consumes this library via a Gradle composite build.
@@ -31,8 +33,15 @@ scripts/setup-android-sdk.sh   # installs the SDK into ~/workspace/android-sdk
 
 ## Build
 
+piper1-gpl, espeak-ng and sonic are git submodules pinned at tested SHAs
+(see `.gitmodules`); onnxruntime is downloaded as a binary (no upstream
+submodule exists for the Android AAR + headers).
+
 ```bash
-scripts/fetch-native-deps.sh   # vendors piper1-gpl, espeak-ng, onnxruntime into third-party/
+git clone --recurse-submodules https://github.com/IhorShevchuk/piper-kotlin.git
+# ...or, in an existing clone:
+git submodule update --init --recursive
+scripts/fetch-native-deps.sh   # inits submodules + stages onnxruntime into third-party/
 ./gradlew :piper-engine:assembleDebug   # builds the native + Kotlin library
 ```
 

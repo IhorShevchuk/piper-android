@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Pinned native dependency versions live in gradle.properties
+# (piper.ndkVersion, piper.ortVersion) - the single source of truth, shared
+# with scripts/fetch-native-deps.sh. The piper1-gpl / espeak-ng / sonic
+# revisions are pinned as git submodule SHAs instead (see .gitmodules).
+# The native-build job loads piper.ndkVersion into the environment as its
+# first step after checkout.
+
+jobs:
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v3
+      - name: Install Android packages
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Run JVM unit tests
+        run: ./gradlew test --stacktrace
+
+  native-build:
+    name: Native build (3 ABIs)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Load NDK version
+        run: echo "NDK_VERSION=$(grep '^piper\.ndkVersion=' gradle.properties | cut -d= -f2)" >> "$GITHUB_ENV"
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v3
+      - name: Cache NDK
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.ANDROID_HOME }}/ndk
+          key: ndk-${{ env.NDK_VERSION }}-${{ runner.os }}
+      - name: Install Android packages
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;$NDK_VERSION"
+      - name: Fetch native deps
+        run: ./scripts/fetch-native-deps.sh
+      - uses: gradle/actions/setup-gradle@v4
+      # Verifies the piper1-gpl patch applies at configure time and the C++
+      # compiles for arm64-v8a, armeabi-v7a and x86_64.
+      - name: Build native libs for all ABIs
+        run: ./gradlew :piper-engine:assembleDebug --stacktrace

@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # Vendors the native dependencies into third-party/:
-#   third-party/piper1-gpl    OHF-Voice/piper1-gpl (libpiper C++ core)
-#   third-party/espeak-ng     espeak-ng/espeak-ng (phonemization)
-#   third-party/sonic         waywardgeek/sonic (used by espeak-ng speech.c)
+#   third-party/piper1-gpl    git submodule, OHF-Voice/piper1-gpl (libpiper C++ core)
+#   third-party/espeak-ng     git submodule, espeak-ng/espeak-ng (phonemization)
+#   third-party/sonic         git submodule, waywardgeek/sonic (used by espeak-ng speech.c)
 #   third-party/onnxruntime   onnxruntime C/C++ headers + per-ABI .so files
 #                             (extracted from the onnxruntime-android AAR)
 #
+# The submodule SHAs are pinned as gitlinks - bump with e.g.
+#   git -C third-party/piper1-gpl checkout <new-sha> && git add third-party/piper1-gpl
+# Other versions live in gradle.properties (piper.ortVersion, piper.ndkVersion).
 # The Gradle build passes these roots to CMake as PIPER1_GPL_DIR,
 # ESPEAK_NG_DIR, SONIC_DIR and ONNXRUNTIME_DIR - see piper-engine/build.gradle.kts.
 set -euo pipefail
@@ -14,39 +17,17 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TP="$ROOT/third-party"
 mkdir -p "$TP"
 
-# Pin to tested SHAs for reproducible builds. Leave empty to track the default
-# branch once; the script prints the resolved SHA so you can pin it.
-PIPER1_GPL_SHA="${PIPER1_GPL_SHA:-}"
-ESPEAK_NG_SHA="${ESPEAK_NG_SHA:-}"
-SONIC_SHA="${SONIC_SHA:-}"
+# Pinned versions come from gradle.properties (single source of truth);
+# the environment still overrides them when set.
+if [ -z "${ORT_VERSION:-}" ]; then
+  ORT_VERSION="$(grep '^piper\.ortVersion=' "$ROOT/gradle.properties" | cut -d= -f2)"
+fi
+ORT_VERSION="${ORT_VERSION:-1.22.0}"
 
-clone_pinned() {
-  local repo="$1" dir="$2" sha="$3" name="$4"
-  if [ -d "$dir/.git" ]; then
-    echo "== $name already present at $dir, skipping clone"
-    return 0
-  fi
-  echo "== cloning $name"
-  git clone "$repo" "$dir"
-  if [ -n "$sha" ]; then
-    git -C "$dir" checkout "$sha"
-  else
-    local resolved
-    resolved="$(git -C "$dir" rev-parse HEAD)"
-    echo "== $name HEAD is $resolved"
-    echo "   pin it: export ${name}_SHA=$resolved and re-run, or edit this script"
-  fi
-}
-
-clone_pinned "https://github.com/OHF-Voice/piper1-gpl" \
-  "$TP/piper1-gpl" "$PIPER1_GPL_SHA" "PIPER1_GPL"
-clone_pinned "https://github.com/espeak-ng/espeak-ng" \
-  "$TP/espeak-ng" "$ESPEAK_NG_SHA" "ESPEAK_NG"
-clone_pinned "https://github.com/waywardgeek/sonic" \
-  "$TP/sonic" "$SONIC_SHA" "SONIC"
+echo "== initializing submodules at their pinned SHAs"
+git -C "$ROOT" submodule update --init --recursive
 
 # --- onnxruntime -----------------------------------------------------------
-ORT_VERSION="1.22.0"
 ORT_DIR="$TP/onnxruntime"
 mkdir -p "$ORT_DIR/include" "$ORT_DIR/lib"
 

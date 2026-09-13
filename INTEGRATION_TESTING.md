@@ -1,4 +1,4 @@
-# piper-android integration testing (M4 + physical device)
+# piper-kotlin integration testing (M4 + physical device)
 
 Unit tests (`:piper-utils:test`, `:engine-jvm:test` via the sandbox scratch
 settings) cover the pure-Kotlin core. The tests in
@@ -7,8 +7,9 @@ settings) cover the pure-Kotlin core. The tests in
 ## Prerequisites (Mac mini M4)
 
 1. Android SDK + NDK 27 (see `scripts/setup-android-sdk.sh`).
-2. Native deps fetched: `scripts/fetch-native-deps.sh`
-   (libonnxruntime.so per ABI, third-party sources).
+2. Native deps ready: submodules checked out at their pinned SHAs
+   (`git submodule update --init --recursive`), then
+   `scripts/fetch-native-deps.sh` (stages libonnxruntime.so per ABI).
 3. A physical Android device with USB debugging, visible to `adb devices`.
 4. Compiled espeak-ng data. The app stages it via
    `../piper-app-android/scripts/stage-espeak-data.sh`; the integration tests

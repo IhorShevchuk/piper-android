@@ -6,8 +6,11 @@ build/
 .cxx/
 */.cxx/
 local.properties
-# Native deps (reproducible via scripts/fetch-native-deps.sh)
-third-party/
+# Native deps: piper1-gpl, espeak-ng and sonic are git submodules (pinned SHAs
+# recorded as gitlinks - see .gitmodules). The onnxruntime download and the
+# host espeak-ng build dir stay ignored:
+third-party/onnxruntime/
+third-party/espeak-ng/build/
 # SDK
 android-sdk/
 # IDE

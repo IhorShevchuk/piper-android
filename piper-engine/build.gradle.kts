@@ -16,7 +16,7 @@ val deviceEspeakDataPath: String =
 android {
     namespace = "dev.ihorshevchuk.piper.engine"
     compileSdk = 35
-    ndkVersion = "27.0.12077973"
+    ndkVersion = providers.gradleProperty("piper.ndkVersion").get()
 
     defaultConfig {
         minSdk = 26
