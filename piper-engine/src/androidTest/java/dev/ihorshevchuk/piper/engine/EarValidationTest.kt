@@ -188,7 +188,7 @@ class EarValidationTest {
     }
 
     private object Texts {
-        private const val Texts.LONG_PARAGRAPH =
+        private const val LONG_PARAGRAPH =
             "The quick brown fox jumps over the lazy dog. " +
                 "Pack my box with five dozen liquor jugs. " +
                 "How vexingly quick daft zebras jump. " +
