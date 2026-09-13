@@ -61,9 +61,11 @@ jobs:
 
   device-tests:
     name: Device tests (emulator)
-    # macOS runners have hardware acceleration for the x86_64 emulator;
-    # the Linux runners do not (software emulation never finishes booting).
-    runs-on: macos-latest
+    # macOS runners have hardware acceleration for the ARM emulator (the
+    # Linux runners have no KVM at all). The large runner gives the
+    # emulator enough CPU/RAM to boot reliably; minutes are free on the
+    # public repo.
+    runs-on: macos-15-large
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -107,6 +109,7 @@ jobs:
           api-level: 30
           arch: arm64-v8a
           target: google_apis
+          emulator-boot-timeout: 900
           emulator-options: -no-snapshot -no-audio -no-boot-anim
           script: |
             adb push third-party/espeak-ng/build/espeak-ng-data /data/local/tmp/espeak-ng-data
