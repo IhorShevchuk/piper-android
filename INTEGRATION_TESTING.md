@@ -59,11 +59,13 @@ The suite downloads the `en_US-lessac-medium` fp16 voice (~32 MB) from
 > `piper_free()` used to call `espeak_Terminate()` per synthesizer. Closing
 > one `PiperEngine` while another was alive killed espeak for the whole
 > process (later syntheses silently produced nothing) and a second
-> terminate/re-init crashed the run. The vendored
-> `third-party/piper1-gpl/libpiper/src/piper.cpp` now shares espeak through
-> a refcount (init once, terminate on last free) and no longer lets C++
-> exceptions (`json::parse`, `Ort::Session`) escape the C API - they return
-> `nullptr` so Kotlin raises `PiperException` instead of aborting.
+> terminate/re-init crashed the run. `third-party/piper1-gpl` stays a
+> pristine upstream checkout; the fix lives in
+> `piper-engine/src/main/cpp/patches/piper1-gpl/` and is applied at CMake
+> configure time: espeak is shared through a refcount (init once, terminate
+> on last free), and C++ exceptions (`json::parse`, `Ort::Session`) no
+> longer escape the C API - they return `nullptr` so Kotlin raises
+> `PiperException` instead of aborting.
 
 ## App-side wiring (piper-app-android)
 

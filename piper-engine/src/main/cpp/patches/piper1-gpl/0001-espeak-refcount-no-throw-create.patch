@@ -1,0 +1,112 @@
+diff --git a/libpiper/src/piper.cpp b/libpiper/src/piper.cpp
+index 56b61b0..4739ea8 100644
+--- a/libpiper/src/piper.cpp
++++ b/libpiper/src/piper.cpp
+@@ -7,6 +7,7 @@
+ #include <filesystem>
+ #include <fstream>
+ #include <limits>
++#include <mutex>
+ #include <unordered_map>
+ 
+ #ifdef WIN32
+@@ -26,6 +27,26 @@
+ 
+ using json = nlohmann::json;
+ 
++// --- Android port patch: espeak-ng is process-global, but piper_free()
++// terminated it per synthesizer. With several live synthesizers (one per
++// PiperEngine, plus tests) freeing one engine killed espeak for the rest:
++// use-after-terminate produced silent phonemization failures, and a second
++// terminate (or a failed re-init, which calls exit(1)) crashed the process.
++// Synthesizers now share espeak through a refcount: initialized once,
++// terminated when the last synthesizer is freed. ---
++namespace {
++std::mutex g_espeak_ref_mutex;
++int g_espeak_ref_count = 0;
++
++// Must hold g_espeak_ref_mutex.
++void espeak_release_locked() {
++  if (--g_espeak_ref_count <= 0) {
++    g_espeak_ref_count = 0;
++    espeak_Terminate();
++  }
++}
++}  // namespace
++
+ auto piper_create_with_options(const piper_create_options *options)
+     -> struct piper_synthesizer * {
+   // onnx
+@@ -89,16 +110,33 @@ auto piper_create_with_options(const piper_create_options *options)
+   }
+ 
+   std::ifstream config_stream(config_path_str);
+-  auto config = json::parse(config_stream);
++  json config;
++  try {
++    config = json::parse(config_stream);
++  } catch (...) {
++    // Android port patch: a corrupt config must fail creation, not abort.
++    return nullptr;
++  }
+   PhonemeType phoneme_type = PhonemeType::Espeak;
+   if (config.contains("phoneme_type")) {
+     phoneme_type = config["phoneme_type"].get<PhonemeType>();
+   }
+ 
+-  if (phoneme_type == PhonemeType::Espeak &&
+-      espeak_Initialize(AUDIO_OUTPUT_SYNCHRONOUS, 0, final_espeak_data_path,
+-                        0) < 0) {
+-    return nullptr;
++  // Android port patch: see the g_espeak_ref_count note above. The first
++  // live Espeak synthesizer initializes espeak; further ones just bump the
++  // refcount. (First engine's espeak data dir wins; all engines share it.)
++  bool espeak_acquired = false;
++  if (phoneme_type == PhonemeType::Espeak) {
++    {
++      std::lock_guard<std::mutex> lock(g_espeak_ref_mutex);
++      if (g_espeak_ref_count == 0 &&
++          espeak_Initialize(AUDIO_OUTPUT_SYNCHRONOUS, 0, final_espeak_data_path,
++                            0) < 0) {
++        return nullptr;
++      }
++      ++g_espeak_ref_count;
++    }
++    espeak_acquired = true;
+   }
+ 
+   auto *synth = new piper_synthesizer();
+@@ -277,8 +315,20 @@ auto piper_create_with_options(const piper_create_options *options)
+   ::MultiByteToWideChar(CP_ACP, 0, model_path, -1, &model_path_wc[0], sz);
+   auto model_path_ort = &model_path_wc[0];
+ #endif
+-  synth->session = std::make_unique<Ort::Session>(
+-      Ort::Session(ort_env, model_path_ort, synth->session_options));
++  // Android port patch: a missing/corrupt model must fail creation with
++  // nullptr (Kotlin turns it into PiperException), never abort the process
++  // by throwing through JNI.
++  try {
++    synth->session = std::make_unique<Ort::Session>(
++        Ort::Session(ort_env, model_path_ort, synth->session_options));
++  } catch (...) {
++    if (espeak_acquired) {
++      std::lock_guard<std::mutex> lock(g_espeak_ref_mutex);
++      espeak_release_locked();
++    }
++    delete synth;
++    return nullptr;
++  }
+ 
+   return synth;
+ }
+@@ -298,7 +348,9 @@ void piper_free(struct piper_synthesizer *synth) {
+     return;
+   }
+   if (synth->phoneme_type == PhonemeType::Espeak) {
+-    espeak_Terminate();
++    // Android port patch: shared espeak, see g_espeak_ref_count note above.
++    std::lock_guard<std::mutex> lock(g_espeak_ref_mutex);
++    espeak_release_locked();
+   }
+   delete synth;
+ }

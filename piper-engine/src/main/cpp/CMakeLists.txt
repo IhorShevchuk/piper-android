@@ -40,7 +40,32 @@ add_definitions(-DHAVE_CONFIG_H)
 # ---------------------------------------------------------------------------
 # libpiper (OHF-Voice/piper1-gpl): the synthesis core, including the Chinese
 # phonemizer (pinyin support lives here, not in Kotlin).
+#
+# third-party/piper1-gpl is a pristine upstream checkout. The Android-port
+# fixes in patches/piper1-gpl/ are applied here at configure time so a
+# fresh fetch-native-deps.sh clone builds correctly. The marker check keeps
+# re-configures a no-op; a failed patch application fails the build loudly.
 # ---------------------------------------------------------------------------
+find_program(PATCH_CMD patch REQUIRED)
+file(STRINGS "${PIPER1_GPL_DIR}/libpiper/src/piper.cpp"
+  _piper_espeak_patch_marker
+  REGEX "Android port patch: espeak-ng is process-global"
+  LIMIT_COUNT 1)
+if(NOT _piper_espeak_patch_marker)
+  message(STATUS "Applying piper1-gpl Android patches")
+  execute_process(
+    COMMAND ${PATCH_CMD} -p1 --silent
+      -i "${CMAKE_CURRENT_SOURCE_DIR}/patches/piper1-gpl/0001-espeak-refcount-no-throw-create.patch"
+    WORKING_DIRECTORY "${PIPER1_GPL_DIR}"
+    RESULT_VARIABLE _piper_patch_result)
+  if(NOT _piper_patch_result EQUAL 0)
+    message(FATAL_ERROR
+      "Failed to apply piper1-gpl Android patch (result ${_piper_patch_result}). "
+      "The pinned piper1-gpl checkout may have moved; regenerate the patch per "
+      "piper-engine/src/main/cpp/patches/piper1-gpl/README.md.")
+  endif()
+endif()
+
 set(PIPER_SOURCES
   "${PIPER1_GPL_DIR}/libpiper/src/piper.cpp"
   "${PIPER1_GPL_DIR}/libpiper/src/chinese_phonemizer.cpp"
