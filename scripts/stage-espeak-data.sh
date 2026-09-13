@@ -12,8 +12,8 @@ ESPEAK="$ROOT/third-party/espeak-ng"
 BUILD="$ESPEAK/build"
 DATA="$BUILD/espeak-ng-data"
 
-if [ ! -d "$ESPEAK/.git" ]; then
-  echo "ERROR: $ESPEAK not found; run scripts/fetch-native-deps.sh first" >&2
+if [ ! -f "$ESPEAK/CMakeLists.txt" ]; then
+  echo "ERROR: $ESPEAK sources not found; run scripts/fetch-native-deps.sh first" >&2
   exit 1
 fi
 
