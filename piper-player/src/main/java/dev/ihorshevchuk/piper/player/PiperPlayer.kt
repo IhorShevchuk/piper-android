@@ -6,6 +6,8 @@ import android.media.AudioManager
 import android.media.AudioTrack
 import android.util.Log
 import dev.ihorshevchuk.piper.engine.PiperEngine
+import dev.ihorshevchuk.piper.engine.PiperSynthesizeOptions
+import dev.ihorshevchuk.piper.utils.AudioChunkQueue
 import dev.ihorshevchuk.piper.utils.SentenceSplitter
 import dev.ihorshevchuk.piper.utils.SpeedCurve
 import dev.ihorshevchuk.piper.utils.SynthesisPlanner
@@ -33,6 +35,8 @@ import java.util.concurrent.atomic.AtomicReference
 class PiperPlayer {
     private val stopped = AtomicBoolean(false)
     private val worker = AtomicReference<ExecutorService?>(null)
+    private val synthProducer = AtomicReference<Thread?>(null)
+    private val chunkQueue = AtomicReference<AudioChunkQueue?>(null)
 
     @Volatile
     private var engine: PiperEngine? = null
@@ -53,21 +57,8 @@ class PiperPlayer {
                     lengthScale = SpeedCurve.lengthScaleForRate(rate),
                     speakerId = speakerId
                 )
-            var samplesWritten = 0L
-            streamToTrack { onSamples ->
-                for (sentence in SentenceSplitter.split(text)) {
-                    if (stopped.get() || done()) break
-                    onMarker(if (lastSampleRate > 0) samplesWritten * 1000L / lastSampleRate else 0L)
-                    engine.synthesize(
-                        sentence,
-                        synthOptions,
-                        onSamples = { s ->
-                            samplesWritten += s.size
-                            onSamples(s)
-                        }
-                    )
-                }
-            }
+            val planned = SentenceSplitter.split(text).map { it to synthOptions }
+            playPlanned(engine, planned, onMarker, done)
         }
     }
 
@@ -85,25 +76,13 @@ class PiperPlayer {
     ) {
         launch(engine) { done ->
             val base = engine.defaultSynthesizeOptions()
-            var samplesWritten = 0L
-            streamToTrack { onSamples ->
-                for (sentence in SynthesisPlanner.planSsml(ssml)) {
-                    if (stopped.get() || done()) break
-                    onMarker(if (lastSampleRate > 0) samplesWritten * 1000L / lastSampleRate else 0L)
-                    val opts = base.copy(
-                        speakerId = speakerId,
-                        lengthScale = SpeedCurve.lengthScaleForRate(sentence.rate)
-                    )
-                    engine.synthesize(
-                        sentence.text,
-                        opts,
-                        onSamples = { s ->
-                            samplesWritten += s.size
-                            onSamples(s)
-                        }
-                    )
-                }
+            val planned = SynthesisPlanner.planSsml(ssml).map { fragment ->
+                fragment.text to base.copy(
+                    speakerId = speakerId,
+                    lengthScale = SpeedCurve.lengthScaleForRate(fragment.rate)
+                )
             }
+            playPlanned(engine, planned, onMarker, done)
         }
     }
 
@@ -148,6 +127,98 @@ class PiperPlayer {
         stopped.set(true)
         engine?.cancel()
         worker.getAndSet(null)?.shutdownNow()
+        // Unblock a producer waiting on a full queue, then interrupt it out
+        // of any in-flight native call.
+        chunkQueue.getAndSet(null)?.abort()
+        synthProducer.getAndSet(null)?.interrupt()
+    }
+
+    /**
+     * Streaming playback with sentence lookahead.
+     *
+     * A dedicated synthesizer thread (producer) walks [planned] sentence by
+     * sentence, offering PCM chunks into a bounded queue; the worker thread
+     * (consumer) drains the queue into the AudioTrack. The next sentence's
+     * `piper_synthesize_start` (espeak + encoder + first decoder inference)
+     * therefore overlaps the current sentence's audio instead of gating it,
+     * which removes the audible gap at sentence boundaries on slow devices.
+     *
+     * [onMarker] fires with the start time (ms) of every sentence as its
+     * first chunk is written to the track.
+     */
+    private fun playPlanned(
+        engine: PiperEngine,
+        planned: List<Pair<String, PiperSynthesizeOptions>>,
+        onMarker: (positionMs: Long) -> Unit,
+        done: () -> Boolean
+    ) {
+        val queue = AudioChunkQueue()
+        chunkQueue.set(queue)
+        // Created unstarted: the reference must be visible before the
+        // thread's first synthProducer.get() check, or it would exit
+        // immediately thinking it was superseded.
+        val producer = Thread {
+            val self = Thread.currentThread()
+            try {
+                for ((text, options) in planned) {
+                    if (stopped.get() || done() || synthProducer.get() !== self) break
+                    var firstChunk = true
+                    engine.synthesize(
+                        text,
+                        options,
+                        onSamples = { s ->
+                            if (stopped.get() || done() || synthProducer.get() !== self) return@synthesize
+                            if (queue.offer(AudioChunkQueue.Chunk(s, firstChunk))) {
+                                firstChunk = false
+                            } else {
+                                return@synthesize
+                            }
+                        }
+                    )
+                }
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+            } catch (e: Exception) {
+                if (!stopped.get()) Log.e(TAG, "playback failed", e)
+            } finally {
+                queue.finish()
+                synthProducer.compareAndSet(self, null)
+            }
+        }
+        producer.isDaemon = true
+        producer.name = "piper-player-synth"
+        synthProducer.set(producer)
+        producer.start()
+        try {
+            var samplesWritten = 0L
+            streamToTrack { onSamples ->
+                while (true) {
+                    if (stopped.get() || done()) break
+                    val chunk = try {
+                        queue.take()
+                    } catch (e: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        break
+                    } ?: break
+                    if (chunk.sentenceStart) {
+                        onMarker(if (lastSampleRate > 0) samplesWritten * 1000L / lastSampleRate else 0L)
+                    }
+                    samplesWritten += chunk.samples.size
+                    onSamples(chunk.samples)
+                }
+            }
+        } finally {
+            queue.abort()
+            // The producer is a daemon; never hang the worker on it, but
+            // give it a moment so a second play() does not compete with a
+            // stale producer for the engine thread.
+            try {
+                producer.join(10_000)
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
+            chunkQueue.compareAndSet(queue, null)
+        }
     }
 
     private fun launch(engine: PiperEngine, block: (() -> Boolean) -> Unit) {
