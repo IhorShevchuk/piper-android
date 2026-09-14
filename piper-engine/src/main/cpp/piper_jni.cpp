@@ -105,7 +105,8 @@ extern "C" {
 JNIEXPORT jlong JNICALL
 Java_dev_ihorshevchuk_piper_engine_PiperEngine_nativeCreate(
     JNIEnv* env, jobject /*thiz*/, jstring modelPath, jstring configPath,
-    jstring espeakDataPath, jstring dataDir, jstring g2pwModelDir) {
+    jstring espeakDataPath, jstring dataDir, jstring g2pwModelDir,
+    jint ortThreads) {
   const std::string model = JStringToStdString(env, modelPath);
   const std::string config = JStringToStdString(env, configPath);
   const std::string espeak = JStringToStdString(env, espeakDataPath);
@@ -121,6 +122,9 @@ Java_dev_ihorshevchuk_piper_engine_PiperEngine_nativeCreate(
   options.espeak_data_path = NullableCStr(espeak);
   options.data_dir = NullableCStr(data);
   options.g2pw_model_dir = NullableCStr(g2pw);
+  // Android port (0002 patch): thread count chosen by Kotlin OnnxThreadPolicy
+  // from the device CPU count; the patched piper_create_options carries it.
+  options.ort_intra_op_num_threads = ortThreads;
 
   // Returns the synthesizer directly, NULL on failure.
   // piper_create_with_options touches process-global espeak state

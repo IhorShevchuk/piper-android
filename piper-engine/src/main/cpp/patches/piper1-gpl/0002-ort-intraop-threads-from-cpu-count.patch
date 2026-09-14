@@ -1,0 +1,51 @@
+--- a/libpiper/include/piper.h
++++ b/libpiper/include/piper.h
+@@ -220,6 +220,16 @@
+    * data_dir/espeak-ng-data and data_dir/g2pw / data_dir.
+    */
+   const char *data_dir;
++
++  /**
++   * \brief Number of ONNX Runtime intra-op threads (Android port field).
++   *
++   * Appended at the end per the struct_size versioning rule above; read only
++   * when struct_size covers it. Callers that leave it unset get the
++   * historical default of 1. The Android JNI layer fills it from
++   * OnnxThreadPolicy based on the device's CPU count.
++   */
++  int ort_intra_op_num_threads;
+ } piper_create_options;
+ 
+ /**
+--- a/libpiper/src/piper.cpp
++++ b/libpiper/src/piper.cpp
+@@ -58,6 +58,17 @@
+     data_dir_opt = options->data_dir;
+   }
+ 
++  // Android port: intra-op thread count chosen by the caller (Kotlin
++  // OnnxThreadPolicy). Unset callers keep the historical default of 1.
++  int ort_intra_op_threads = 1;
++  if (options->struct_size >=
++      offsetof(piper_create_options, ort_intra_op_num_threads) +
++          sizeof(options->ort_intra_op_num_threads)) {
++    if (options->ort_intra_op_num_threads > 0) {
++      ort_intra_op_threads = options->ort_intra_op_num_threads;
++    }
++  }
++
+   // Resolve espeak_data_path via data_dir fallback
+   std::string resolved_espeak_data;
+   const char *final_espeak_data_path = espeak_data_path;
+@@ -263,7 +274,10 @@
+   synth->session_options.DisableCpuMemArena();
+   synth->session_options.DisableMemPattern();
+   synth->session_options.DisableProfiling();
+-  synth->session_options.SetIntraOpNumThreads(1);
++  // Android port patch: use all cores for ORT. The count arrives via
++  // piper_create_options from the caller (Kotlin OnnxThreadPolicy); inter-op
++  // stays 1 and execution stays sequential - only intra-op scales.
++  synth->session_options.SetIntraOpNumThreads(ort_intra_op_threads);
+   synth->session_options.SetInterOpNumThreads(1);
+   synth->session_options.SetGraphOptimizationLevel(
+       GraphOptimizationLevel::ORT_ENABLE_BASIC);
