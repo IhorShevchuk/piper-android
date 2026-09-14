@@ -55,6 +55,23 @@ The suite downloads the `en_US-lessac-medium` fp16 voice (~32 MB) from
   `onAlignment` stays silent and markers use the character-proportion
   fallback; a missing model file throws `PiperException`; `close()` is
   idempotent; the public `recreateSynthesizer()` leaves the engine usable.
+- `PiperEngineConcurrencyLockTest`: two engines synthesizing concurrently
+  both complete (regression test for the espeak-ng process-global crash:
+  without the session lock this SIGSEGV'd intermittently); cancelling one
+  engine mid-utterance releases the lock so a second engine can synthesize
+  afterwards instead of wedging.
+
+## Host test for the native session lock
+
+`piper-engine/src/main/cpp/native_synthesis_lock.h` (the process-wide
+espeak-ng mutex + deferred-free queue used by `piper_jni.cpp`) is plain
+C++17 with no JNI dependency, so its contract is tested on the host:
+
+```bash
+g++ -std=c++17 -pthread -Wall -Wextra -I piper-engine/src/main/cpp \
+    piper-engine/src/main/cpp/tests/native_synthesis_lock_test.cpp \
+    -o /tmp/native_synthesis_lock_test && /tmp/native_synthesis_lock_test
+```
 
 > **Device-test lesson (2026-09-13):** espeak-ng is process-global, but
 > `piper_free()` used to call `espeak_Terminate()` per synthesizer. Closing
