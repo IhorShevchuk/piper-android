@@ -120,19 +120,23 @@ class PiperEngine(
     ) {
         val opts = synthOptions ?: defaultSynthesizeOptions()
         cancelled.set(false)
-        orchestrator.synthesize(
-            planned = SynthesisPlanner.plan(text),
-            // Per-sentence memory check (port of the doSynthesize loop in
-            // piper-objc): runs before native.start for every sentence.
-            resolveOptions = { ensureSynthesizer(); opts },
-            isCancelled = { cancelled.get() },
-            callbacks = SynthesisOrchestrator.Callbacks(
-                onSamples = onSamples,
-                onAlignment = onAlignment,
-                onMarkers = onMarkers,
-                onSampleRate = { currentSampleRate.set(it) }
+        try {
+            orchestrator.synthesize(
+                planned = SynthesisPlanner.plan(text),
+                // Per-sentence memory check (port of the doSynthesize loop in
+                // piper-objc): runs before native.start for every sentence.
+                resolveOptions = { ensureSynthesizer(); opts },
+                isCancelled = { cancelled.get() },
+                callbacks = SynthesisOrchestrator.Callbacks(
+                    onSamples = onSamples,
+                    onAlignment = onAlignment,
+                    onMarkers = onMarkers,
+                    onSampleRate = { currentSampleRate.set(it) }
+                )
             )
-        )
+        } finally {
+            endEspeakSession()
+        }
     }
 
     /**
@@ -154,17 +158,21 @@ class PiperEngine(
         cancelled.set(false)
         val resolved = resolveSsmlPlan(ssml, base, speakerId)
         val optionsBySentence = resolved.associate { it.sentence to it.options }
-        orchestrator.synthesize(
-            planned = resolved.map { it.sentence },
-            resolveOptions = { ensureSynthesizer(); optionsBySentence.getValue(it) },
-            isCancelled = { cancelled.get() },
-            callbacks = SynthesisOrchestrator.Callbacks(
-                onSamples = onSamples,
-                onAlignment = onAlignment,
-                onMarkers = onMarkers,
-                onSampleRate = { currentSampleRate.set(it) }
+        try {
+            orchestrator.synthesize(
+                planned = resolved.map { it.sentence },
+                resolveOptions = { ensureSynthesizer(); optionsBySentence.getValue(it) },
+                isCancelled = { cancelled.get() },
+                callbacks = SynthesisOrchestrator.Callbacks(
+                    onSamples = onSamples,
+                    onAlignment = onAlignment,
+                    onMarkers = onMarkers,
+                    onSampleRate = { currentSampleRate.set(it) }
+                )
             )
-        )
+        } finally {
+            endEspeakSession()
+        }
     }
 
     /**
@@ -338,6 +346,25 @@ class PiperEngine(
     }
 
     /**
+     * Releases the process-wide espeak session lock held by the current
+     * utterance, if any (see native_synthesis_lock.h). Utterances that
+     * drain normally already released it on the final chunk; this covers
+     * cancelled or errored utterances that never reached PIPER_DONE - a
+     * long-lived engine holding the lock would otherwise wedge every
+     * other engine in the process. Best effort: never masks the
+     * utterance's own result.
+     */
+    private fun endEspeakSession() {
+        if (closedFlag.get()) return
+        try {
+            runNative("piper_end_session") { nativeEndSession(handle) }
+        } catch (_: Exception) {
+            // The engine is closing or the call failed; the session lock is
+            // released by destroy as well, so there is no leak either way.
+        }
+    }
+
+    /**
      * [NativeSynth] backed by JNI. Each call is serialized onto the engine
      * thread through [runNative]; the orchestrator itself runs on the caller
      * thread, so these must never be wrapped in another [runNative] (that
@@ -460,6 +487,12 @@ class PiperEngine(
     private external fun nativeLastChunkPhonemeIds(handle: Long): IntArray?
 
     private external fun nativeLastChunkAlignments(handle: Long): IntArray?
+
+    /**
+     * Ends the current espeak session early (releases the process-wide
+     * lock). Idempotent; safe with no session in flight.
+     */
+    private external fun nativeEndSession(handle: Long)
 
     private external fun nativeVersion(): String
 }
