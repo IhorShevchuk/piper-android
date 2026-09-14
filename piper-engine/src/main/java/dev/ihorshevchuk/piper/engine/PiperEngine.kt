@@ -323,7 +323,8 @@ class PiperEngine(
             options.configPath,
             resolvedEspeakPath,
             options.dataDir,
-            options.g2pwModelDir
+            options.g2pwModelDir,
+            OnnxThreadPolicy.intraOpThreads()
         )
         if (handle == 0L) {
             throw PiperException("piper_create_with_options failed for ${options.modelPath}")
@@ -454,7 +455,8 @@ class PiperEngine(
         configPath: String?,
         espeakDataPath: String?,
         dataDir: String?,
-        g2pwModelDir: String?
+        g2pwModelDir: String?,
+        ortThreads: Int
     ): Long
 
     private external fun nativeDestroy(handle: Long)

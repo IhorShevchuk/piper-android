@@ -22,6 +22,17 @@ check), so a fresh `fetch-native-deps.sh` clone still builds correctly.
     `Ort::Session` failures return `nullptr` (Kotlin raises
     `PiperException`) instead of aborting through JNI.
 
+- `0002-ort-intraop-threads-from-cpu-count.patch`
+  - Generated against piper1-gpl `404aefe` (Sep 2026).
+  - Upstream hard-codes `SetIntraOpNumThreads(1)`, leaving 7 of 8 cores
+    idle on e.g. a Galaxy A13 - one sentence took 7-10 s to synthesize,
+    slower than realtime. The patch appends an `ort_intra_op_num_threads`
+    field to `piper_create_options` (end of struct, gated by `struct_size`
+    per upstream's own versioning rule) and uses it for
+    `SetIntraOpNumThreads`. Inter-op stays 1, execution stays sequential.
+    The Android JNI layer fills the field from `OnnxThreadPolicy`
+    (device CPU count, capped at 8); unset callers keep the default of 1.
+
 If the pinned piper1-gpl SHA moves, regenerate: apply manually in a
 scratch checkout, `git diff` it back out, and replace this file. The CMake
 hook fails the build loudly if a patch no longer applies.
